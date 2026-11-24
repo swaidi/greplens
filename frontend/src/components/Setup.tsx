@@ -111,13 +111,13 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 <div className="card"><div className="muted small">{t("os")}</div><div style={{ fontWeight: 600 }}>{hw.os} · {hw.bits}</div>
                   <div className="muted small">{t("freeSpace")}: {hw.drives.map((d) => `${d.mount} ${d.free_gb} GB`).join(" · ")}</div></div>
               </div>
-              <div className="card col" style={{ borderColor: "var(--accent-line)", background: "#F2F9FA" }}>
+              <div className="card col" style={{ borderColor: "var(--accent-line)", background: "var(--accent-tint)" }}>
                 <strong style={{ color: "var(--accent-dark)" }}>{t("recommended")}</strong>
                 <div>{(info?.manifest ?? []).filter((m) => hw.recommendation.models.includes(m.id)).map((m) => `${m.name} (${m.use})`).join(" · ")}</div>
                 {hw.recommendation.features.map((f) => {
                   const [cls, label] = status(f.status);
                   return (
-                    <div key={f.id} className="row" style={{ justifyContent: "space-between", padding: "8px 10px", background: "#fff", borderRadius: 8 }}>
+                    <div key={f.id} className="row" style={{ justifyContent: "space-between", padding: "8px 10px", background: "var(--panel)", borderRadius: 8 }}>
                       <span className="col" style={{ gap: 0 }}><strong>{t(`feat_${f.id}` as Key)}</strong>
                         {f.speed && <span className="muted small">{f.speed}</span>}</span>
                       <span className={`pill ${cls}`}>{label}</span>
@@ -132,7 +132,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           {step === 2 && info && (
             <>
               <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("chooseModels")}</h1><p className="muted" style={{ margin: 0 }}>{t("chooseModelsHint")}</p></div>
-              <div className="card col" style={{ background: "#F6F8FA" }}>
+              <div className="card col" style={{ background: "var(--soft2)" }}>
                 <strong>{t("haveFiles")}</strong>
                 <span className="muted small">{t("haveFilesHint")}</span>
                 <div className="row">
@@ -143,9 +143,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 {scanMsg && <span className="small">{scanMsg}</span>}
               </div>
               {info.existing.filter((e) => picked[e.model_id]).map((e) => (
-                <div key={e.path} className="row card" style={{ background: "#EEF6EE", borderColor: "#BFDFC4" }}>
-                  <span style={{ color: "#1F6B3A" }}><IconCheck size={18} /></span>
-                  <div className="grow"><strong style={{ color: "#1F6B3A" }}>{t("existingFound", { s: e.source, n: e.label })}</strong>
+                <div key={e.path} className="row card" style={{ background: "var(--ok-bg)", borderColor: "var(--ok-line)" }}>
+                  <span style={{ color: "var(--ok-text)" }}><IconCheck size={18} /></span>
+                  <div className="grow"><strong style={{ color: "var(--ok-text)" }}>{t("existingFound", { s: e.source, n: e.label })}</strong>
                     <div className="small">{t("reuseHint")}</div></div>
                   <button className="btn" disabled={!!reused[e.model_id]} onClick={() => reuse(e)}>{reused[e.model_id] ? t("reused") : t("reuse")}</button>
                 </div>
@@ -171,8 +171,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 <div className="card col">
                   <div className="row" style={{ justifyContent: "space-between" }}><strong>{drive.mount}</strong>
                     <span className="muted">{drive.free_gb} / {drive.total_gb} GB</span></div>
-                  <div className="bar"><div style={{ width: `${100 - (drive.free_gb / drive.total_gb) * 100}%`, background: "#8A94A3" }} /></div>
-                  <span style={{ color: drive.free_gb > totalGb + 2 ? "#1F6B3A" : "#A1261B" }}>
+                  <div className="bar"><div style={{ width: `${100 - (drive.free_gb / drive.total_gb) * 100}%`, background: "var(--bar-used)" }} /></div>
+                  <span style={{ color: drive.free_gb > totalGb + 2 ? "var(--ok-text)" : "var(--danger-text)" }}>
                     {drive.free_gb > totalGb + 2 ? t("enoughSpace") : t("notEnoughSpace")}</span>
                 </div>
               )}
@@ -190,7 +190,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 return (
                   <div key={m.id} className="card col">
                     <div className="row" style={{ justifyContent: "space-between" }}><strong>{m.name}</strong><strong style={{ color: "var(--accent-dark)" }}>{label}</strong></div>
-                    <div className="bar"><div style={{ width: `${pct}%`, background: pct === 100 ? "#2E9D5B" : undefined }} /></div>
+                    <div className="bar"><div style={{ width: `${pct}%`, background: pct === 100 ? "var(--ok-bar)" : undefined }} /></div>
                     <span className="muted small">{reused[m.id] ? reused[m.id].path : st ? `${gb(st.done_bytes)} / ${gb(st.total)} GB${st.speed ? ` · ${(st.speed / 1024 ** 2).toFixed(1)} MB/s` : ""}${st.message ? ` · ${st.message}` : ""}` : ""}</span>
                   </div>
                 );

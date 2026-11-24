@@ -3,7 +3,7 @@ const base = (size: number) => ({ width: size, height: size, viewBox: "0 0 24 24
   strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true });
 
 export const Logo = ({ size = 26 }: P) => (
-  <svg {...base(size)} stroke="#0B6576" strokeWidth={2.2}><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /><path d="M8 10.5h5M8 8h3" /></svg>
+  <svg {...base(size)} style={{ stroke: "var(--accent-logo)" }} strokeWidth={2.2}><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /><path d="M8 10.5h5M8 8h3" /></svg>
 );
 export const IconDoc = ({ size = 15 }: P) => <svg {...base(size)}><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></svg>;
 export const IconDownload = ({ size = 15 }: P) => <svg {...base(size)}><path d="M12 3v12M7 10l5 5 5-5M5 21h14" /></svg>;

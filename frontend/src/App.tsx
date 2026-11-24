@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { I18n, Lang, translator } from "./i18n";
+import { applyTheme, Theme } from "./theme";
 import Home from "./components/Home";
 import Setup from "./components/Setup";
 import Settings from "./components/Settings";
@@ -14,8 +15,9 @@ export default function App() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.get<{ language: Lang; setup_complete: boolean }>("/api/settings")
-      .then((s) => { setLangState(s.language === "ar" ? "ar" : "en"); setView(s.setup_complete ? { name: "home" } : { name: "setup" }); })
+    applyTheme("system");
+    api.get<{ language: Lang; setup_complete: boolean; theme: Theme }>("/api/settings")
+      .then((s) => { applyTheme(s.theme); setLangState(s.language === "ar" ? "ar" : "en"); setView(s.setup_complete ? { name: "home" } : { name: "setup" }); })
       .catch((e) => setError(String(e)));
   }, []);
 

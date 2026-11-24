@@ -55,7 +55,9 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     return () => clearInterval(timer);
   }, [docs, loadWs]);
 
-  const loadNotes = useCallback(() => { if (docId) api.get<Note[]>(`/api/documents/${docId}/notes`).then(setNotes); }, [docId]);
+  const loadNotes = useCallback(async () => {
+    if (docId) setNotes(await api.get<Note[]>(`/api/documents/${docId}/notes`));
+  }, [docId]);
   useEffect(() => {
     setSel(null); setActive(null); setSegments([]); setNotes([]);
     if (doc?.status === "ready") { api.get<Segment[]>(`/api/documents/${doc.id}/segments`).then(setSegments); loadNotes(); }
@@ -239,7 +241,14 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           )}
         </section>
 
-        <NotesPanel notes={notes} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes} />
+        <NotesPanel notes={notes} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
+          onAdd={doc?.status === "ready" ? async () => {
+            const page = doc.kind === "pdf" ? pageInfo[0] : 1;
+            const near = segments.find((x) => x.page === page);
+            const n = await api.post<Note>("/api/notes", { document_id: doc.id, page, category: "info", body: "",
+              segment_id: near?.id ?? null, location: near?.location ?? `Page ${page}` });
+            await loadNotes(); setActive(n.id);
+          } : undefined} />
         <AssistantPanel doc={doc} workspace={ws} segments={segments} notes={notes} activeNote={active}
           onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill} />
       </main>

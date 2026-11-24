@@ -4,6 +4,7 @@ import { Key, useI18n } from "../i18n";
 import { IconTrash } from "../icons";
 import { colorOf } from "./PdfView";
 import type { InkStroke } from "../api";
+import { HandwritingPad, HandwritingView } from "./Handwriting";
 
 function InkPreview({ ink }: { ink: InkStroke[] }) {
   const xs = ink.flatMap((s) => s.points.map((p) => p[0])), ys = ink.flatMap((s) => s.points.map((p) => p[1]));
@@ -22,10 +23,11 @@ function InkPreview({ ink }: { ink: InkStroke[] }) {
 const CATS = ["risk", "query", "clarification", "action", "info"];
 
 type Props = { notes: Note[]; numbers: Record<string, number>; active: string | null; onActive: (id: string) => void;
-  onJump: (n: Note) => void; reload: () => void };
+  onJump: (n: Note) => void; reload: () => void; onAdd?: () => void };
 
-export default function NotesPanel({ notes, numbers, active, onActive, onJump, reload }: Props) {
+export default function NotesPanel({ notes, numbers, active, onActive, onJump, reload, onAdd }: Props) {
   const { t } = useI18n();
+  const [writing, setWriting] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [status, setStatus] = useState("all");
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -36,7 +38,11 @@ export default function NotesPanel({ notes, numbers, active, onActive, onJump, r
 
   return (
     <aside className="notes-pane" aria-label={t("notes")}>
-      <h3 style={{ fontSize: 15 }}>{t("notes")} <span className="muted" style={{ fontWeight: 500 }}>· {shown.length}</span></h3>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3 style={{ fontSize: 15 }}>{t("notes")} <span className="muted" style={{ fontWeight: 500 }}>· {shown.length}</span></h3>
+        {onAdd && <button className="icon-btn" aria-label={t("pageNote")} title={t("pageNote")}
+          onClick={onAdd} style={{ border: "1px solid var(--line)", fontSize: 18 }}>+</button>}
+      </div>
       <div className="row wrap" style={{ gap: 6 }}>
         {["all", ...CATS.slice(0, 3)].map((c) => (
           <button key={c} className={`chip solid small ${filter === c ? "on" : ""}`} onClick={() => setFilter(c)}>{t(c as Key)}</button>
@@ -51,7 +57,7 @@ export default function NotesPanel({ notes, numbers, active, onActive, onJump, r
         <div key={n.id} ref={(el) => { refs.current[n.id] = el; }} className={`note-card ${active === n.id ? "active" : ""}`}
           onClick={() => onActive(n.id)}>
           <div className="row wrap" style={{ gap: 6 }}>
-            <span className="note-num" style={{ background: n.mark === "ink" ? "#FDECEA" : n.mark ? colorOf(n.color) : "#EAEEF2" }}>{numbers[n.id]}</span>
+            <span className="note-num" style={{ background: n.mark === "ink" ? "#FDECEA" : n.mark ? colorOf(n.color) : "var(--chip)" }}>{numbers[n.id]}</span>
             {n.mark === "ink" && <span className="pill high">{t("inkNote")}</span>}
             <select className={`pill ${n.category ?? ""}`} style={{ border: 0 }} value={n.category ?? ""} aria-label="Category"
               onChange={(e) => patch(n, { category: e.target.value || null })}>
@@ -67,15 +73,22 @@ export default function NotesPanel({ notes, numbers, active, onActive, onJump, r
           {n.mark === "ink" && n.ink?.length ? <InkPreview ink={n.ink} /> : null}
           {n.quote && <div className="quote" dir="auto">“{n.quote.length > 220 ? n.quote.slice(0, 220) + "…" : n.quote}”</div>}
           <NoteBody note={n} onSave={(body) => patch(n, { body })} />
+          {writing === n.id
+            ? <HandwritingPad initial={n.handwriting ?? []} onCancel={() => setWriting(null)}
+                onSave={async (hw) => { await patch(n, { handwriting: hw }); setWriting(null); }} />
+            : n.handwriting?.length ? <div onDoubleClick={() => setWriting(n.id)}><HandwritingView strokes={n.handwriting} /></div> : null}
           <TagEditor tags={n.tags ?? []} onSave={(tags) => patch(n, { tags })} />
           <div className="row wrap muted small" style={{ justifyContent: "space-between" }}>
             <span dir="auto">{n.location}</span>
             <span>{n.author} · {new Date(n.created * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</span>
           </div>
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row wrap" style={{ gap: 6 }}>
             <button className="btn soft small" onClick={(e) => { e.stopPropagation(); onJump(n); }}>{t("jump")}</button>
             <button className="btn small" onClick={(e) => { e.stopPropagation(); patch(n, { status: n.status === "open" ? "resolved" : "open" }); }}>
               {n.status === "open" ? t("resolve") : t("reopen")}</button>
+            {writing !== n.id && <button className="btn small" onClick={(e) => { e.stopPropagation(); setWriting(n.id); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+              {t("handwrite")}</button>}
           </div>
         </div>
       ))}

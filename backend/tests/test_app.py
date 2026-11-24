@@ -235,3 +235,28 @@ def test_scan_folder(client, tmp_path):
     assert ids == {"qwen3-14b", "bge-m3"}
     assert client.get("/api/settings").json()["models_dir"] == str(tmp_path)
     assert client.post("/api/models/scan", json={"folder": str(tmp_path / "missing")}).status_code == 400
+
+
+def test_handwritten_page_note_exports(client, pdf_doc):
+    hw = [{"color": "#1D4F91", "width": 2.5, "points": [[0.1, 0.05], [0.3, 0.12], [0.5, 0.06]]}]
+    note = client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "location": "Page 1",
+                                           "body": "", "category": "info", "handwriting": hw}).json()
+    assert note["handwriting"][0]["points"][2] == [0.5, 0.06]
+    with zipfile.ZipFile(io.BytesIO(client.get(f"/api/documents/{pdf_doc['id']}/export.docx").content)) as zf:
+        rels = zf.read("word/_rels/comments.xml.rels").decode()
+    assert "image" in rels
+
+
+def test_question_saved_while_answering(client, pdf_doc, monkeypatch):
+    from greplens import qa
+    seen = {}
+
+    def slow_answer(*args):
+        seen["rows"] = client.get(f"/api/documents/{pdf_doc['id']}/chat").json()
+        raise RuntimeError("engine stopped")
+    monkeypatch.setattr(qa, "_answer", slow_answer)
+    with pytest.raises(RuntimeError):
+        qa.ask(pdf_doc["id"], "Pending question?")
+    assert seen["rows"][-1]["content"] == "Pending question?" and seen["rows"][-1]["meta"]["pending"]
+    rows = client.get(f"/api/documents/{pdf_doc['id']}/chat").json()
+    assert all(r["content"] != "Pending question?" for r in rows)   # removed again after a failure

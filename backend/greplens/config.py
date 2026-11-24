@@ -49,6 +49,7 @@ def resources_dir() -> Path:
 DEFAULTS = {
     "setup_complete": False,
     "language": "en",
+    "theme": "system",            # system | light | dark
     "models_dir": "",
     "engine": "builtin",          # builtin (bundled llama.cpp) | ollama
     "models": {},                 # role -> {"path": ..., "id": ..., "source": ...}

@@ -4,13 +4,14 @@ import { Key, useI18n } from "../i18n";
 import { IconBack, IconTrash } from "../icons";
 import type { View } from "../App";
 import type { Existing } from "./Setup";
+import { applyTheme, Theme } from "../theme";
 
 type Hardware = { cpu: string; cores: number; ram_gb: number; dedicated_gpu: string | null; gpus: string[]; measured: Record<string, number> };
 type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string; id?: string }>; existing: Existing[];
   updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean> };
-type Settings = { language: string; update_check: boolean; author: string; models_dir: string; engine: string };
+type Settings = { theme?: Theme; language: string; update_check: boolean; author: string; models_dir: string; engine: string };
 type Term = { id: string; en: string; ar: string };
-const SECTIONS: Key[] = ["deviceModels", "language", "reviewCategories", "glossary", "updates", "about"];
+const SECTIONS: Key[] = ["deviceModels", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
 const roleOf = (e: Existing) => (e as Existing & { role?: string }).role ?? "";
 const ROLE: Record<string, Key> = { fast: "feat_qa", review: "feat_review", embed: "feat_search" };
 
@@ -70,7 +71,7 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                   </div>
                 );
               })}
-              <div className="card col" style={{ background: "#F6F8FA" }}>
+              <div className="card col" style={{ background: "var(--soft2)" }}>
                 <strong>{t("haveFiles")}</strong>
                 <span className="muted small">{t("modelFilesHint")} {t("haveFilesHint")}</span>
                 <div className="row">
@@ -86,7 +87,7 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                 </div>
                 {scanMsg && <span className="small">{scanMsg}</span>}
                 {models.existing.filter((e) => models.installed[roleOf(e)]?.path !== e.path).map((e) => (
-                  <div key={e.path} className="row wrap" style={{ justifyContent: "space-between", background: "#fff", padding: "8px 10px", borderRadius: 8 }}>
+                  <div key={e.path} className="row wrap" style={{ justifyContent: "space-between", background: "var(--panel)", padding: "8px 10px", borderRadius: 8 }}>
                     <span className="col" style={{ gap: 0 }}><strong>{e.label}</strong><span className="muted small" dir="ltr">{e.source} · {e.path}</span></span>
                     <button className="btn small primary" onClick={async () => {
                       await api.post("/api/models/reuse", { model_id: e.model_id, path: e.path, source: e.source, ollama_name: e.ollama_name });
@@ -98,6 +99,20 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
               {models.updates.map((u) => <div key={u.role} className="banner" style={{ borderRadius: 10 }}>{t("modelUpdate", { n: u.new, g: u.size_gb })}</div>)}
               <div className="row wrap"><button className="btn primary" onClick={async () => { await api.patch("/api/settings", { setup_complete: false }); window.location.reload(); }}>{t("runSetup")}</button></div>
             </>
+          )}
+
+          {section === "appearance" && settings && (
+            <div className="col">
+              {(["system", "light", "dark"] as const).map((th) => (
+                <button key={th} className={`mode-card ${(settings.theme ?? "system") === th ? "on" : ""}`}
+                  aria-pressed={(settings.theme ?? "system") === th}
+                  onClick={() => { applyTheme(th); patch({ theme: th }); }}>
+                  <span className="radio" /><span className="col" style={{ gap: 0 }}>
+                    <strong>{t(th === "system" ? "themeSystem" : th === "light" ? "themeLight" : "themeDark")}</strong>
+                    <span className="muted small">{t(th === "system" ? "themeSystemHint" : th === "light" ? "themeLightHint" : "themeDarkHint")}</span></span>
+                </button>
+              ))}
+            </div>
           )}
 
           {section === "language" && (
@@ -116,7 +131,7 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
               <p className="muted" style={{ margin: 0 }}>{t("categoriesHint")}</p>
               <div><button className="btn primary" onClick={() => setEditing({ name: "", name_ar: "", focus: [] })}>+ {t("newCategory")}</button></div>
               {editing && (
-                <div className="card col" style={{ background: "#F6F8FA" }}>
+                <div className="card col" style={{ background: "var(--soft2)" }}>
                   <div className="grid2">
                     <label className="col"><span>{t("name")} (EN)</span><input className="input" value={editing.name ?? ""} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></label>
                     <label className="col"><span>{t("name")} (AR)</span><input className="input" dir="rtl" value={editing.name_ar ?? ""} onChange={(e) => setEditing({ ...editing, name_ar: e.target.value })} /></label>

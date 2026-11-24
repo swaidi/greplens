@@ -64,7 +64,7 @@ def get_settings():
 
 @app.patch("/api/settings")
 def patch_settings(body: dict):
-    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir"}
+    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir", "theme"}
     return save_settings({k: v for k, v in body.items() if k in allowed})
 
 
@@ -249,6 +249,7 @@ class NoteBody(BaseModel):
     tags: list[str] = []
     ai_answer: bool = False
     location: str | None = None
+    handwriting: list = []           # handwritten note: strokes on the note pad, x 0..1, y 0..pad height/width
     ink: list = []                   # freehand strokes: [{"color", "width", "points": [[x, y], ...]}] (page-relative 0..1)
 
 
@@ -272,7 +273,7 @@ def create_note(body: NoteBody):
 @app.patch("/api/notes/{note_id}")
 def update_note(note_id: str, body: dict):
     _must("notes", note_id)
-    allowed = {"body", "category", "status", "tags", "color", "mark", "ink"}
+    allowed = {"body", "category", "status", "tags", "color", "mark", "ink", "handwriting"}
     db.update("notes", note_id, {k: v for k, v in body.items() if k in allowed} | {"updated": db.now()})
     return db.get("notes", note_id)
 

@@ -32,7 +32,8 @@ def _items(document_id: str) -> list[dict]:
         if n["ai_answer"]:
             body += " (saved AI answer)"
         items.append({"quote": n["quote"] or "", "text": body, "author": n["author"] or "GrepLens",
-                      "segment_id": n["segment_id"], "mark": n["mark"], "color": n["color"]})
+                      "segment_id": n["segment_id"], "mark": n["mark"], "color": n["color"],
+                      "handwriting": n.get("handwriting") or [], "page": n["page"]})
     review = db.query("SELECT id FROM reviews WHERE document_id = ? ORDER BY created DESC LIMIT 1", (document_id,))
     if review:
         for f in db.query("SELECT * FROM findings WHERE review_id = ?", (review[0]["id"],)):
@@ -65,7 +66,7 @@ def _annotate_word(path, items) -> bytes:
         if target is None or not target.runs:
             continue
         text = f"“{item['quote'][:120]}” — {item['text']}" if item["quote"] else item["text"]
-        document.add_comment(target.runs, text=text, author=item["author"], initials=item["author"][:2].upper())
+        _comment(document, target.runs, text, item)
     out = io.BytesIO()
     document.save(out)
     return out.getvalue()
@@ -83,6 +84,8 @@ def _build_copy(doc: dict, items: list[dict]) -> bytes:
     by_segment: dict[str, list[dict]] = {}
     for item in items:
         seg = next((s for s in segments if s["id"] == item["segment_id"]), None) or locate(item["quote"], segments)
+        if not seg and item.get("page"):  # a note on the page itself: attach it to the page's first paragraph
+            seg = next((s for s in segments if s["page"] == item["page"]), None)
         if seg:
             by_segment.setdefault(seg["id"], []).append(item)
     inks = _ink_images(doc) if doc["kind"] == "pdf" else {}
@@ -123,13 +126,12 @@ def _write_with_comments(document, paragraph, text: str, items: list[dict]) -> N
             run.underline = True
         elif item["mark"] == "highlight":
             run.font.highlight_color = HIGHLIGHT.get(item["color"] or "yellow", WD_COLOR_INDEX.YELLOW)
-        document.add_comment(run, text=item["text"], author=item["author"], initials=item["author"][:2].upper())
+        _comment(document, run, item["text"], item)
         cursor = end
     if cursor < len(text) or not paragraph.runs:
         paragraph.add_run(text[cursor:])
     for item in [s[2] for s in spans if s[0] < 0] + used:
-        document.add_comment(paragraph.runs, text=f"“{item['quote'][:120]}” — {item['text']}",
-                             author=item["author"], initials=item["author"][:2].upper())
+        _comment(document, paragraph.runs, f"“{item['quote'][:120]}” — {item['text']}" if item["quote"] else item["text"], item)
 
 
 def _ink_images(doc: dict) -> dict[int, list[tuple[bytes, dict]]]:
@@ -179,3 +181,30 @@ def _write_inks(document, items: list[tuple[bytes, dict]]) -> None:
         label = " · ".join(x for x in [(note["category"] or "Ink note").capitalize(), (note["status"] or "open").capitalize()] if x)
         document.add_comment(run, text=f"[{label}] {note['body'] or 'Handwritten mark'} ({note['location'] or ''})".strip(),
                              author=note["author"] or "GrepLens", initials=(note["author"] or "GL")[:2].upper())
+
+
+def _comment(document, runs, text: str, item: dict) -> None:
+    """Add a Word comment; a handwritten note is placed inside the comment as an image."""
+    comment = document.add_comment(runs, text=text, author=item["author"], initials=item["author"][:2].upper())
+    if item.get("handwriting"):
+        from docx.shared import Inches
+        comment.add_paragraph().add_run().add_picture(io.BytesIO(handwriting_png(item["handwriting"])), width=Inches(2.6))
+
+
+def handwriting_png(strokes: list[dict], pad_width: float = 600) -> bytes:
+    """Render note-pad strokes (x 0..1, y in the same units) to a PNG on white."""
+    import pymupdf
+
+    ys = [p[1] for s in strokes for p in s["points"]] or [0.3]
+    height = max(0.15, max(ys) + 0.04) * pad_width
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=pad_width, height=height)
+        shape = page.new_shape()
+        for stroke in strokes:
+            pts = [pymupdf.Point(p[0] * pad_width, p[1] * pad_width) for p in stroke["points"]]
+            if len(pts) > 1:
+                shape.draw_polyline(pts)
+                shape.finish(color=_rgb(stroke.get("color", "#17202B")), width=stroke.get("width", 2.5), closePath=False,
+                             lineCap=1, lineJoin=1)
+        shape.commit()
+        return page.get_pixmap(dpi=96).tobytes("png")

@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, workspace_id TEXT, document_id TEXT, mark TEXT, color TEXT, page INTEGER,
   rects TEXT, segment_id TEXT, start_offset INTEGER, end_offset INTEGER, quote TEXT, body TEXT,
   category TEXT, status TEXT DEFAULT 'open', tags TEXT DEFAULT '[]', author TEXT, ai_answer INTEGER DEFAULT 0,
-  location TEXT, ink TEXT DEFAULT '[]', created REAL, updated REAL);
+  location TEXT, ink TEXT DEFAULT '[]', handwriting TEXT DEFAULT '[]', created REAL, updated REAL);
 CREATE INDEX IF NOT EXISTS note_doc ON notes(document_id);
 CREATE TABLE IF NOT EXISTS reviews (
   id TEXT PRIMARY KEY, document_id TEXT, config TEXT, status TEXT, position INTEGER DEFAULT 0,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS glossary (
   id TEXT PRIMARY KEY, en TEXT NOT NULL, ar TEXT NOT NULL);
 """
 
-JSON_FIELDS = {"categories", "rects", "tags", "config", "meta", "bbox", "ink"}
+JSON_FIELDS = {"categories", "rects", "tags", "config", "meta", "bbox", "ink", "handwriting"}
 
 
 def new_id() -> str:
@@ -62,7 +62,7 @@ def connect():
         conn.close()
 
 
-MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'")]
+MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'"), ("notes", "handwriting", "TEXT DEFAULT '[]'")]
 
 
 def init() -> None:

@@ -25,6 +25,10 @@ export default function AssistantPanel(props: Props) {
   );
 }
 
+// Questions keep running when you switch documents or tabs; the answer is shown when you come back.
+const inflight = new Map<string, Promise<unknown>>();
+const errors = new Map<string, string>();
+
 type TabProps = Props & { cats: string[]; setCats: (c: string[]) => void };
 
 function useProfiles() {
@@ -50,7 +54,18 @@ function AskTab({ doc, cats, setCats, onJump, reloadNotes, notes, activeNote, pr
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => { if (doc) api.get<ChatRow[]>(`/api/documents/${doc.id}/chat`).then(setRows); }, [doc?.id]); // eslint-disable-line
+  const docRef = useRef(doc?.id);
+  docRef.current = doc?.id;
+  const loadChat = (id: string) => api.get<ChatRow[]>(`/api/documents/${id}/chat`).then((r) => { if (docRef.current === id) setRows(r); });
+  useEffect(() => {
+    if (!doc) return;
+    const id = doc.id;
+    loadChat(id);
+    setError(errors.get(id) ?? "");
+    const running = inflight.get(id);
+    setBusy(!!running);
+    if (running) running.finally(() => { if (docRef.current === id) { setBusy(false); setError(errors.get(id) ?? ""); loadChat(id); } });
+  }, [doc?.id]); // eslint-disable-line
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [rows, busy]);
   useEffect(() => {
     if (prefill) { setQuestion(`“${prefill.text.slice(0, 300)}”\n`); setTimeout(() => inputRef.current?.focus(), 50); }
@@ -60,13 +75,16 @@ function AskTab({ doc, cats, setCats, onJump, reloadNotes, notes, activeNote, pr
   const send = async () => {
     if (!doc || !question.trim() || busy) return;
     const q = question.trim();
-    setQuestion(""); setBusy(true); setError("");
+    const id = doc.id;
+    setQuestion(""); setBusy(true); setError(""); errors.delete(id);
+    if (inputRef.current) inputRef.current.style.height = "";
     setRows((r) => [...r, { id: `tmp-${Date.now()}`, role: "user", content: q, meta: {} }]);
-    try {
-      const a = await api.post<Answer>(`/api/documents/${doc.id}/ask`, { question: q, mode, categories: cats });
-      setRows((r) => [...r, { id: a.id ?? `a-${Date.now()}`, role: "assistant", content: a.from_document, meta: a }]);
-    } catch (e) { setError(String(e).replace(/^Error: /, "")); }
-    setBusy(false);
+    const request = api.post<Answer>(`/api/documents/${id}/ask`, { question: q, mode, categories: cats })
+      .catch((e) => { errors.set(id, String(e).replace(/^Error: /, "")); })
+      .finally(() => inflight.delete(id));
+    inflight.set(id, request);
+    await request;
+    if (docRef.current === id) { setBusy(false); setError(errors.get(id) ?? ""); loadChat(id); }
   };
   const saveAsNote = async (a: Answer) => {
     if (!doc) return;
@@ -107,11 +125,17 @@ function AskTab({ doc, cats, setCats, onJump, reloadNotes, notes, activeNote, pr
       </div>
       <div className="row" style={{ padding: "12px 14px", borderTop: "1px solid var(--line)", alignItems: "flex-end" }}>
         <label className="grow"><span className="sr">{t("askPlaceholder")}</span>
-          <textarea ref={inputRef} className="input" rows={2} dir="auto" placeholder={t("askPlaceholder")} value={question}
-            onChange={(e) => setQuestion(e.target.value)}
+          <textarea ref={inputRef} className="input ask-input" rows={2} dir="auto" placeholder={t("askPlaceholder")} value={question}
+            onChange={(e) => {
+              setQuestion(e.target.value);
+              const el = e.target;  // grow with the text, up to about half the panel
+              el.style.height = "auto";
+              el.style.height = `${Math.min(el.scrollHeight + 2, Math.max(160, window.innerHeight * 0.45))}px`;
+            }}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} /></label>
         <button className="btn big primary" disabled={busy || !question.trim()} onClick={send}>{t("send")}</button>
       </div>
+      <div className="muted small" style={{ padding: "0 14px 6px" }}>{t("enterHint")}</div>
       {rows.length > 0 && (
         <button className="btn small" style={{ margin: "0 14px 10px", alignSelf: "flex-start" }}
           onClick={async () => { if (doc) { await api.del(`/api/documents/${doc.id}/chat`); setRows([]); } }}>{t("clearChat")}</button>
@@ -210,7 +234,7 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
           </button>
         ))}
         {mode === "checklist" && (
-          <div className="col card" style={{ background: "#F6F8FA" }}>
+          <div className="col card" style={{ background: "var(--soft2)" }}>
             <textarea className="input" rows={5} dir="auto" placeholder={t("checklistPlaceholder")} value={checklist}
               onChange={(e) => setChecklist(e.target.value)} />
             <input ref={fileRef} type="file" accept=".txt,.md,.csv" hidden onChange={async (e) => {
@@ -250,7 +274,7 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
                 onClick={() => api.post(`/api/reviews/${review.id}/resume`).then(() => setReview({ ...review, status: "running" }))}>{t("resume")}</button>}
             </div>
             <div className="bar"><div style={{ width: `${review.total ? (review.position / review.total) * 100 : 3}%` }} /></div>
-            {review.status === "error" && <span className="small" style={{ color: "#A1261B" }}>{review.message}</span>}
+            {review.status === "error" && <span className="small" style={{ color: "var(--danger-text)" }}>{review.message}</span>}
           </div>
           <h4 style={{ fontSize: 13 }}>{t("findings")} · {review.findings?.length ?? 0}</h4>
           {review.status === "done" && !review.findings?.length && <span className="muted small">{t("noFindings")}</span>}

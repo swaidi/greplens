@@ -12,7 +12,7 @@ export type Segment = {
 };
 export type InkStroke = { color: string; width: number; points: number[][] };
 export type Note = {
-  id: string; document_id: string; mark: "highlight" | "underline" | "ink" | null; ink?: InkStroke[]; color: string | null; page: number | null;
+  id: string; document_id: string; mark: "highlight" | "underline" | "ink" | null; ink?: InkStroke[]; handwriting?: InkStroke[]; color: string | null; page: number | null;
   rects: number[][]; segment_id: string | null; start_offset: number | null; end_offset: number | null;
   quote: string; body: string; category: string | null; status: string; tags: string[]; author: string;
   ai_answer: number; location: string | null; created: number;

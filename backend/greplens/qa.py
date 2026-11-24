@@ -31,6 +31,16 @@ def ask(document_id: str, question: str, mode: str = "category", categories: lis
         raise KeyError("document not found")
     history = db.query("SELECT role, content, meta FROM chats WHERE document_id = ? ORDER BY created DESC LIMIT 6",
                        (document_id,))[::-1]
+    asked = db.insert("chats", {"document_id": document_id, "role": "user", "content": question, "meta": {"pending": True},
+                                "created": db.now()})
+    try:
+        return _answer(doc, document_id, question, mode, categories, history, asked)
+    except Exception:
+        db.execute("DELETE FROM chats WHERE id = ?", (asked["id"],))
+        raise
+
+
+def _answer(doc, document_id, question, mode, categories, history, asked) -> dict:
     last_question = next((h["content"] for h in reversed(history) if h["role"] == "user"), "")
     search = question if len(question) > 40 or not last_question else f"{last_question}\n{question}"
     sources = index.retrieve(doc["workspace_id"], document_id, search, k=6)
@@ -75,7 +85,7 @@ def ask(document_id: str, question: str, mode: str = "category", categories: lis
                        "segment_id": sources[n - 1]["segment_ids"][0]} for n in cited],
         "mode": mode, "categories": [p["name"] for p in chosen], "searched_pages": doc.get("pages", 0),
     }
-    db.insert("chats", {"document_id": document_id, "role": "user", "content": question, "meta": {}, "created": db.now()})
+    db.update("chats", asked["id"], {"meta": {}})
     reply = db.insert("chats", {"document_id": document_id, "role": "assistant",
                                 "content": answer["from_document"] or "Not found in the document.",
                                 "meta": answer, "created": db.now()})
@@ -84,6 +94,7 @@ def ask(document_id: str, question: str, mode: str = "category", categories: lis
 
 
 def history(document_id: str) -> list[dict]:
+    """Conversation so far; a question still being answered has meta.pending = true."""
     return db.query("SELECT * FROM chats WHERE document_id = ? ORDER BY created", (document_id,))
 
 
