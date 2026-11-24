@@ -88,5 +88,11 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          name: GrepLens ${{ github.ref_name }}
+          draft: false
+          make_latest: true
+          generate_release_notes: true
+          body: |
+            Windows installer: download `GrepLens_*_x64-setup.exe` below and run it.
+            Installed copies of GrepLens offer this update automatically (Settings > Updates > Check now).
           files: src-tauri/target/release/bundle/nsis/*-setup.exe
