@@ -254,6 +254,5 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
   background: #FDFDF8 repeating-linear-gradient(to bottom, transparent 0 27px, #E6EAF0 27px 28px); }
 .hw-pad { height: 170px; touch-action: none; cursor: crosshair; }
 
-/* app logo: shown on a small white badge where the background is dark */
-.logo-img { display: block; border-radius: 50%; }
-html[data-theme="dark"] .logo-img, .setup-nav .logo-img { background: #FFFFFF; padding: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.2); }
+/* app logo: transparent background everywhere */
+.logo-img { display: block; }
