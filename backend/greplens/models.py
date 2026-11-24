@@ -112,6 +112,14 @@ def detect_existing() -> list[dict]:
     return matches
 
 
+def scan_folder(folder: str) -> list[dict]:
+    """Remember a folder holding model files and return the models found there and elsewhere."""
+    if not Path(folder).is_dir():
+        raise FileNotFoundError(f"Folder not found: {folder}")
+    save_settings({"models_dir": folder})
+    return detect_existing()
+
+
 def installed() -> dict:
     return load_settings().get("models", {})
 
@@ -126,9 +134,20 @@ def use_model(model_id: str, path: str, source: str, ollama_name: str | None = N
 
 
 # ------------------------------------------------------------------ downloads
+HEADERS = {"User-Agent": "GrepLens (+https://github.com/swaidi/greplens)"}
+
+
+def _log(message: str) -> None:
+    """Download diagnostics: logs/downloads.log in the data folder."""
+    from .config import data_dir
+    with open(data_dir() / "logs" / "downloads.log", "a", encoding="utf-8") as fh:
+        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {message}\n")
+
+
 def resolve_file(model: dict) -> dict:
     """Find the file on Hugging Face with its exact size and SHA-256."""
-    tree = httpx.get(f"{HF}/api/models/{model['repo']}/tree/main", timeout=20, follow_redirects=True).json()
+    tree = httpx.get(f"{HF}/api/models/{model['repo']}/tree/main", timeout=20, follow_redirects=True,
+                     headers=HEADERS).json()
     for item in tree:
         if item.get("type") == "file" and fnmatch.fnmatch(item["path"], model["file"]):
             lfs = item.get("lfs") or {}
@@ -158,28 +177,32 @@ def pause(flag: bool) -> dict:
     global _thread
     if flag:
         _pause.set()
+        for st in _state.values():  # shown at once, even while a connection is still waiting
+            if st["status"] in ("queued", "downloading"):
+                st.update(status="paused", speed=0, message="Paused")
     else:
         _pause.clear()
         pending = [m for m, s in _state.items() if s["status"] in ("paused", "queued", "error")]
+        for m in pending:
+            _state[m].update(status="queued", message="")
         if pending and (_thread is None or not _thread.is_alive()):
-            _thread = threading.Thread(target=_download_all, args=(pending, Path(load_settings()["models_dir"])), daemon=True)
+            _thread = threading.Thread(target=_download_all, args=(pending, Path(load_settings()["models_dir"])),
+                                       daemon=True)
             _thread.start()
     return progress()
 
 
 def _download_all(model_ids: list[str], folder: Path) -> None:
     for mid in model_ids:
+        if _pause.is_set():
+            return
         if _state[mid]["status"] == "done":
             continue
         try:
             _download(by_id(mid), folder, _state[mid])
         except Exception as exc:
-            _state[mid].update(status="error", message=str(exc))
-        if _pause.is_set():
-            for other in model_ids:
-                if _state[other]["status"] in ("queued", "downloading"):
-                    _state[other]["status"] = "paused"
-            return
+            _log(f"{mid}: failed: {exc!r}")
+            _state[mid].update(status="error", speed=0, message=str(exc))
 
 
 def _download(model: dict, folder: Path, st: dict) -> None:
@@ -188,42 +211,58 @@ def _download(model: dict, folder: Path, st: dict) -> None:
     target = folder / Path(info["path"]).name
     part = target.with_suffix(target.suffix + ".part")
     st["total"] = info["size"] or 0
+    _log(f"{model['id']}: {info['path']} size={info['size']} sha256={info['sha256']}")
     if not target.exists():
-        url = f"{HF}/{model['repo']}/resolve/main/{info['path']}"
-        for attempt in range(6):  # resume after dropped connections
+        url = f"{HF}/{model['repo']}/resolve/main/{info['path']}?download=true"
+        attempt = 0
+        while True:
             have = part.stat().st_size if part.exists() else 0
-            headers = {"Range": f"bytes={have}-"} if have else {}
+            st["done_bytes"] = have
+            headers = {**HEADERS, **({"Range": f"bytes={have}-"} if have else {})}
             try:
+                st["message"] = "Connecting"
                 with httpx.stream("GET", url, headers=headers, follow_redirects=True,
-                                  timeout=httpx.Timeout(60, connect=20)) as resp:
+                                  timeout=httpx.Timeout(30, connect=20)) as resp:
+                    _log(f"{model['id']}: HTTP {resp.status_code} from {resp.url.host} (resume at {have})")
                     if resp.status_code == 416:
                         break
                     resp.raise_for_status()
                     mode = "ab" if have and resp.status_code == 206 else "wb"
-                    done, t0, last = (have if mode == "ab" else 0), time.time(), 0
+                    done = have if mode == "ab" else 0
+                    st["message"] = "Downloading"
+                    window_start, window_bytes = time.time(), done
                     with open(part, mode) as fh:
-                        for chunk in resp.iter_bytes(1 << 20):
+                        for chunk in resp.iter_bytes(256 * 1024):
                             fh.write(chunk)
                             done += len(chunk)
-                            if time.time() - t0 > 1:
-                                st["speed"] = (done - last) / (time.time() - t0) if last else 0
-                                t0, last = time.time(), done
                             st["done_bytes"] = done
+                            now = time.time()
+                            if now - window_start >= 1:
+                                st["speed"] = (done - window_bytes) / (now - window_start)
+                                window_start, window_bytes = now, done
                             if _pause.is_set():
-                                st["status"] = "paused"
+                                st.update(status="paused", speed=0, message="Paused")
                                 return
                 break
-            except httpx.HTTPError as exc:
-                st["message"] = f"Connection interrupted, retrying ({attempt + 1}/6): {exc}"
+            except httpx.HTTPError as exc:  # includes a read timeout: no data for 30 seconds
+                if _pause.is_set():
+                    st.update(status="paused", speed=0, message="Paused")
+                    return
+                progressed = (part.stat().st_size if part.exists() else 0) > have
+                attempt = 1 if progressed else attempt + 1
+                _log(f"{model['id']}: attempt {attempt} interrupted: {exc!r}")
+                if attempt >= 8:
+                    raise RuntimeError("No data received from Hugging Face after several retries. "
+                                       "You can download the file in your browser and use Reuse.") from exc
+                st.update(speed=0, message=f"No data received, retrying ({attempt}/8)")
                 time.sleep(min(30, 2 ** attempt))
-        else:
-            raise RuntimeError("Download failed after several retries.")
-        st.update(status="verifying", message="Checking file integrity")
+        st.update(status="verifying", speed=0, message="Checking file integrity")
         if info["sha256"] and _sha256(part) != info["sha256"]:
             part.unlink(missing_ok=True)
             raise RuntimeError("Checksum mismatch: the file was corrupted and has been removed. Please retry.")
         os.replace(part, target)
-    st.update(status="done", done_bytes=st["total"], message="Verified")
+    st.update(status="done", done_bytes=st["total"], speed=0, message="Verified")
+    _log(f"{model['id']}: done, verified")
     use_model(model["id"], str(target), "download")
 
 

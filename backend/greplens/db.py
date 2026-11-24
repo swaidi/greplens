@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY, workspace_id TEXT, document_id TEXT, mark TEXT, color TEXT, page INTEGER,
   rects TEXT, segment_id TEXT, start_offset INTEGER, end_offset INTEGER, quote TEXT, body TEXT,
   category TEXT, status TEXT DEFAULT 'open', tags TEXT DEFAULT '[]', author TEXT, ai_answer INTEGER DEFAULT 0,
-  location TEXT, created REAL, updated REAL);
+  location TEXT, ink TEXT DEFAULT '[]', created REAL, updated REAL);
 CREATE INDEX IF NOT EXISTS note_doc ON notes(document_id);
 CREATE TABLE IF NOT EXISTS reviews (
   id TEXT PRIMARY KEY, document_id TEXT, config TEXT, status TEXT, position INTEGER DEFAULT 0,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS glossary (
   id TEXT PRIMARY KEY, en TEXT NOT NULL, ar TEXT NOT NULL);
 """
 
-JSON_FIELDS = {"categories", "rects", "tags", "config", "meta", "bbox"}
+JSON_FIELDS = {"categories", "rects", "tags", "config", "meta", "bbox", "ink"}
 
 
 def new_id() -> str:
@@ -62,9 +62,15 @@ def connect():
         conn.close()
 
 
+MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'")]
+
+
 def init() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        for table, column, kind in MIGRATIONS:  # columns added after 0.1.0
+            if column not in {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
 
 def _decode(row: sqlite3.Row | None) -> dict | None:

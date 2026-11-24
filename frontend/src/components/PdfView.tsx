@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import type { Note } from "../api";
+import type { InkStroke, Note } from "../api";
 import type { Jump, Selection } from "./Workspace";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -13,9 +13,10 @@ type Props = {
   url: string; notes: Note[]; numbers: Record<string, number>; activeNote: string | null; jump: Jump | null;
   onSelect: (s: Selection | null) => void; onNoteClick: (id: string) => void; onPage: (n: number, total: number) => void;
   onContext: (s: Selection, x: number, y: number) => void;
+  pen: { on: boolean; color: string; width: number; pending: Record<number, InkStroke[]>; add: (page: number, stroke: InkStroke) => void };
 };
 
-export default function PdfView({ url, notes, numbers, activeNote, jump, onSelect, onNoteClick, onPage, onContext }: Props) {
+export default function PdfView({ url, notes, numbers, activeNote, jump, onSelect, onNoteClick, onPage, onContext, pen }: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<{ w: number; h: number }[]>([]);
   const [width, setWidth] = useState(820);
@@ -62,26 +63,44 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
     pageRefs.current[jump.page - 1]?.scrollIntoView({ behavior: "smooth", block: jump.box ? "center" : "start" });
   }, [jump]);
 
-  const handleMouseUp = (e: React.MouseEvent) => {
+  // Selection works with mouse, pen and finger: pointer release, plus a short pause after the
+  // selection changes (touch selection handles do not send a pointer release).
+  useEffect(() => {
+    let timer = 0;
+    const onChange = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const sel = readSelection();
+        if (sel && boxRef.current?.contains(window.getSelection()!.anchorNode)) onSelect(sel);
+      }, 450);
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => { document.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
+  }, [onSelect]);
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (pen.on) return;
     const sel = readSelection();
-    if (sel) onSelect({ ...sel, x: e.clientX, y: e.clientY });
-    else if (!(e.target as HTMLElement).closest(".mark, .badge")) onSelect(null);
+    if (sel) onSelect(sel);
+    else if (!(e.target as HTMLElement).closest(".mark, .badge, .ink-mark")) onSelect(null);
   };
   const handleContext = (e: React.MouseEvent) => {
     const sel = readSelection();
-    if (sel) { e.preventDefault(); onContext({ ...sel, x: e.clientX, y: e.clientY }, e.clientX, e.clientY); }
+    if (sel) { e.preventDefault(); onContext(sel, e.clientX, e.clientY); }
   };
 
   if (error) return <div className="error-box">{error}</div>;
   return (
-    <div ref={boxRef} className="col" style={{ gap: 16, width: "100%" }} onMouseUp={handleMouseUp} onContextMenu={handleContext}>
+    <div ref={boxRef} dir="ltr" className={`col ${pen.on ? "pen-on" : ""}`} style={{ gap: 16, width: "100%" }}
+      onPointerUp={handlePointerUp} onContextMenu={handleContext}>
       {pdf && sizes.map((size, i) => {
         const scale = width / size.w;
         return (
           <div key={i} ref={(el) => { pageRefs.current[i] = el; }} data-page={i + 1}>
             <PdfPage pdf={pdf} number={i + 1} scale={scale} width={width} height={size.h * scale}
-              notes={notes.filter((n) => n.page === i + 1 && n.rects?.length)} numbers={numbers} activeNote={activeNote}
-              onNoteClick={onNoteClick} flash={jump && jump.page === i + 1 ? jump : null} />
+              notes={notes.filter((n) => n.page === i + 1 && n.rects?.length && n.mark !== "ink")} numbers={numbers} activeNote={activeNote}
+              inkNotes={notes.filter((n) => n.page === i + 1 && n.mark === "ink" && n.ink?.length)}
+              onNoteClick={onNoteClick} flash={jump && jump.page === i + 1 ? jump : null} pen={pen} />
           </div>
         );
       })}
@@ -89,7 +108,7 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
   );
 }
 
-function readSelection(): Omit<Selection, "x" | "y"> | null {
+function readSelection(): Selection | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
   const text = sel.toString().replace(/\s+/g, " ").trim();
@@ -102,15 +121,23 @@ function readSelection(): Omit<Selection, "x" | "y"> | null {
     .filter((r) => r.width > 1 && r.height > 2 && r.left >= box.left - 2 && r.right <= box.right + 2)
     .map((r) => [(r.left - box.left) / box.width, (r.top - box.top) / box.height, r.width / box.width, r.height / box.height]);
   if (!rects.length) return null;
-  return { page: Number(pageEl.dataset.page), rects, quote: text, segment_id: null, start: null, end: null };
+  const all = range.getBoundingClientRect();
+  return { page: Number(pageEl.dataset.page), rects, quote: text, segment_id: null, start: null, end: null,
+    x: all.left + all.width / 2, y: all.top };
 }
 
 type PageProps = {
-  pdf: PDFDocumentProxy; number: number; scale: number; width: number; height: number; notes: Note[];
+  pdf: PDFDocumentProxy; number: number; scale: number; width: number; height: number; notes: Note[]; inkNotes: Note[];
   numbers: Record<string, number>; activeNote: string | null; onNoteClick: (id: string) => void; flash: Jump | null;
+  pen: Props["pen"];
 };
 
-function PdfPage({ pdf, number, scale, width, height, notes, numbers, activeNote, onNoteClick, flash }: PageProps) {
+export const strokePath = (pts: number[][], w: number, h: number) =>
+  pts.map((p, i) => `${i ? "L" : "M"}${(p[0] * w).toFixed(1)} ${(p[1] * h).toFixed(1)}`).join(" ");
+
+function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, activeNote, onNoteClick, flash, pen }: PageProps) {
+  const [drawing, setDrawing] = useState<InkStroke | null>(null);
+  const sawPen = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -162,6 +189,44 @@ function PdfPage({ pdf, number, scale, width, height, notes, numbers, activeNote
         <button key={`b-${n.id}`} className="badge" aria-label={`Note ${numbers[n.id]}`} onClick={() => onNoteClick(n.id)}
           style={{ right: -34, top: `calc(${n.rects[0][1] * 100}% - 2px)`, background: colorOf(n.color) }}>{numbers[n.id]}</button>
       ))}
+      <svg className="ink-layer" width={width} height={height} aria-hidden="true">
+        {inkNotes.map((n) => (
+          <g key={n.id} className="ink-mark" onClick={() => onNoteClick(n.id)}
+            style={{ opacity: activeNote && activeNote !== n.id ? 0.75 : 1, cursor: "pointer", pointerEvents: pen.on ? "none" : "stroke" }}>
+            {n.ink!.map((st, j) => <path key={j} d={strokePath(st.points, width, height)} stroke={st.color} strokeWidth={st.width * scale}
+              fill="none" strokeLinecap="round" strokeLinejoin="round" />)}
+          </g>
+        ))}
+        {[...(pen.pending[number] ?? []), ...(drawing ? [drawing] : [])].map((st, j) => (
+          <path key={`p${j}`} d={strokePath(st.points, width, height)} stroke={st.color} strokeWidth={st.width * scale} fill="none"
+            strokeLinecap="round" strokeLinejoin="round" />
+        ))}
+      </svg>
+      {inkNotes.map((n) => {
+        const ys = n.ink!.flatMap((st) => st.points.map((p) => p[1]));
+        return <button key={`ib-${n.id}`} className="badge" aria-label={`Note ${numbers[n.id]}`} onClick={() => onNoteClick(n.id)}
+          style={{ right: -34, top: `calc(${Math.min(...ys) * 100}% - 2px)`, background: "#FDECEA" }}>{numbers[n.id]}</button>;
+      })}
+      {pen.on && (
+        <div className="ink-input"
+          onPointerDown={(e) => {
+            if (e.pointerType === "pen") sawPen.current = true;
+            if (e.pointerType === "touch" && sawPen.current) return; // palm rejection while using a pen
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const r = e.currentTarget.getBoundingClientRect();
+            setDrawing({ color: pen.color, width: pen.width, points: [[(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]] });
+          }}
+          onPointerMove={(e) => {
+            if (!drawing || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+            const r = e.currentTarget.getBoundingClientRect();
+            const pt = [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+            const last = drawing.points[drawing.points.length - 1];
+            if (Math.hypot((pt[0] - last[0]) * r.width, (pt[1] - last[1]) * r.height) >= 1.5)
+              setDrawing({ ...drawing, points: [...drawing.points, pt.map((v) => Math.round(v * 10000) / 10000)] });
+          }}
+          onPointerUp={() => { if (drawing && drawing.points.length > 1) pen.add(number, drawing); setDrawing(null); }}
+          onPointerCancel={() => setDrawing(null)} />
+      )}
       {flash?.box && <div key={flash.ts} className="flash" style={{ left: `${flash.box[0] * 100 - 0.5}%`, top: `${flash.box[1] * 100 - 0.5}%`,
         width: `${(flash.box[2] - flash.box[0]) * 100 + 1}%`, height: `${(flash.box[3] - flash.box[1]) * 100 + 1}%` }} />}
     </div>

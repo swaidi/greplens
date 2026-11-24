@@ -10,8 +10,9 @@ export type Segment = {
   id: string; seq: number; page: number; approx_page: number; article: string; clause: string;
   paragraph: number; location: string; text: string; bbox: number[];
 };
+export type InkStroke = { color: string; width: number; points: number[][] };
 export type Note = {
-  id: string; document_id: string; mark: "highlight" | "underline" | null; color: string | null; page: number | null;
+  id: string; document_id: string; mark: "highlight" | "underline" | "ink" | null; ink?: InkStroke[]; color: string | null; page: number | null;
   rects: number[][]; segment_id: string | null; start_offset: number | null; end_offset: number | null;
   quote: string; body: string; category: string | null; status: string; tags: string[]; author: string;
   ai_answer: number; location: string | null; created: number;

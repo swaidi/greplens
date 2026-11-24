@@ -18,3 +18,8 @@ src-tauri/resources/tessdata/*
 !src-tauri/resources/tessdata/.gitkeep
 .pytest_cache/
 *.tsbuildinfo
+
+# model files placed inside the project folder
+Models/
+*.gguf
+*.gguf.part

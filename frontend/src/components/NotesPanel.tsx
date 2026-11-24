@@ -3,6 +3,21 @@ import { api, Note } from "../api";
 import { Key, useI18n } from "../i18n";
 import { IconTrash } from "../icons";
 import { colorOf } from "./PdfView";
+import type { InkStroke } from "../api";
+
+function InkPreview({ ink }: { ink: InkStroke[] }) {
+  const xs = ink.flatMap((s) => s.points.map((p) => p[0])), ys = ink.flatMap((s) => s.points.map((p) => p[1]));
+  const [x0, y0] = [Math.min(...xs), Math.min(...ys)];
+  const w = Math.max(0.01, Math.max(...xs) - x0), h = Math.max(0.01, Math.max(...ys) - y0);
+  const k = 280 / Math.max(w, h * 2);
+  return (
+    <svg width="100%" height={Math.min(120, h * k + 16)} viewBox={`-8 -8 ${w * k + 16} ${h * k + 16}`} role="img" aria-label="Ink note"
+      style={{ background: "#F6F8FA", borderRadius: 6 }}>
+      {ink.map((s, i) => <path key={i} d={s.points.map((p, j) => `${j ? "L" : "M"}${((p[0] - x0) * k).toFixed(1)} ${((p[1] - y0) * k).toFixed(1)}`).join(" ")}
+        stroke={s.color} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />)}
+    </svg>
+  );
+}
 
 const CATS = ["risk", "query", "clarification", "action", "info"];
 
@@ -36,7 +51,8 @@ export default function NotesPanel({ notes, numbers, active, onActive, onJump, r
         <div key={n.id} ref={(el) => { refs.current[n.id] = el; }} className={`note-card ${active === n.id ? "active" : ""}`}
           onClick={() => onActive(n.id)}>
           <div className="row wrap" style={{ gap: 6 }}>
-            <span className="note-num" style={{ background: n.mark ? colorOf(n.color) : "#EAEEF2" }}>{numbers[n.id]}</span>
+            <span className="note-num" style={{ background: n.mark === "ink" ? "#FDECEA" : n.mark ? colorOf(n.color) : "#EAEEF2" }}>{numbers[n.id]}</span>
+            {n.mark === "ink" && <span className="pill high">{t("inkNote")}</span>}
             <select className={`pill ${n.category ?? ""}`} style={{ border: 0 }} value={n.category ?? ""} aria-label="Category"
               onChange={(e) => patch(n, { category: e.target.value || null })}>
               <option value="">—</option>
@@ -48,6 +64,7 @@ export default function NotesPanel({ notes, numbers, active, onActive, onJump, r
             <button className="icon-btn" style={{ width: 30, height: 30 }} aria-label={t("delete")}
               onClick={async (e) => { e.stopPropagation(); await api.del(`/api/notes/${n.id}`); reload(); }}><IconTrash /></button>
           </div>
+          {n.mark === "ink" && n.ink?.length ? <InkPreview ink={n.ink} /> : null}
           {n.quote && <div className="quote" dir="auto">“{n.quote.length > 220 ? n.quote.slice(0, 220) + "…" : n.quote}”</div>}
           <NoteBody note={n} onSave={(body) => patch(n, { body })} />
           <TagEditor tags={n.tags ?? []} onSave={(tags) => patch(n, { tags })} />

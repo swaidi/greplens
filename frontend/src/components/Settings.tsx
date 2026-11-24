@@ -3,13 +3,15 @@ import { api, Profile } from "../api";
 import { Key, useI18n } from "../i18n";
 import { IconBack, IconTrash } from "../icons";
 import type { View } from "../App";
+import type { Existing } from "./Setup";
 
 type Hardware = { cpu: string; cores: number; ram_gb: number; dedicated_gpu: string | null; gpus: string[]; measured: Record<string, number> };
-type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string }>;
+type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string; id?: string }>; existing: Existing[];
   updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean> };
 type Settings = { language: string; update_check: boolean; author: string; models_dir: string; engine: string };
 type Term = { id: string; en: string; ar: string };
 const SECTIONS: Key[] = ["deviceModels", "language", "reviewCategories", "glossary", "updates", "about"];
+const roleOf = (e: Existing) => (e as Existing & { role?: string }).role ?? "";
 const ROLE: Record<string, Key> = { fast: "feat_qa", review: "feat_review", embed: "feat_search" };
 
 export default function SettingsView({ go, back }: { go: (v: View) => void; back: View }) {
@@ -23,6 +25,8 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
   const [editing, setEditing] = useState<Partial<Profile> | null>(null);
   const [term, setTerm] = useState({ en: "", ar: "" });
   const [updateMsg, setUpdateMsg] = useState("");
+  const [scanFolder, setScanFolder] = useState("");
+  const [scanMsg, setScanMsg] = useState("");
 
   const load = () => {
     api.get<Settings>("/api/settings").then(setSettings);
@@ -66,6 +70,31 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                   </div>
                 );
               })}
+              <div className="card col" style={{ background: "#F6F8FA" }}>
+                <strong>{t("haveFiles")}</strong>
+                <span className="muted small">{t("modelFilesHint")} {t("haveFilesHint")}</span>
+                <div className="row">
+                  <input className="input grow" dir="ltr" placeholder={settings?.models_dir || "D:\\dev\\GrepLens\\Models"} value={scanFolder}
+                    onChange={(e) => setScanFolder(e.target.value)} />
+                  <button className="btn" disabled={!scanFolder.trim()} onClick={async () => {
+                    try {
+                      const r = await api.post<{ existing: Existing[] }>("/api/models/scan", { folder: scanFolder });
+                      setModels({ ...models, existing: r.existing }); setScanMsg(t("scanResult", { n: r.existing.length }));
+                      api.get<Settings>("/api/settings").then(setSettings);
+                    } catch (e) { setScanMsg(String(e).replace(/^Error: /, "")); }
+                  }}>{t("scanFolder")}</button>
+                </div>
+                {scanMsg && <span className="small">{scanMsg}</span>}
+                {models.existing.filter((e) => models.installed[roleOf(e)]?.path !== e.path).map((e) => (
+                  <div key={e.path} className="row wrap" style={{ justifyContent: "space-between", background: "#fff", padding: "8px 10px", borderRadius: 8 }}>
+                    <span className="col" style={{ gap: 0 }}><strong>{e.label}</strong><span className="muted small" dir="ltr">{e.source} · {e.path}</span></span>
+                    <button className="btn small primary" onClick={async () => {
+                      await api.post("/api/models/reuse", { model_id: e.model_id, path: e.path, source: e.source, ollama_name: e.ollama_name });
+                      api.get<ModelsInfo>("/api/models").then(setModels);
+                    }}>{t("useFile")}</button>
+                  </div>
+                ))}
+              </div>
               {models.updates.map((u) => <div key={u.role} className="banner" style={{ borderRadius: 10 }}>{t("modelUpdate", { n: u.new, g: u.size_gb })}</div>)}
               <div className="row wrap"><button className="btn primary" onClick={async () => { await api.patch("/api/settings", { setup_complete: false }); window.location.reload(); }}>{t("runSetup")}</button></div>
             </>

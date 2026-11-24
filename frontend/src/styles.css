@@ -122,7 +122,7 @@ textarea.input { resize: vertical; }
 @keyframes flashp { 0%, 50% { background: var(--accent-soft); } 100% { background: transparent; } }
 
 /* selection toolbar and popups */
-.sel-toolbar { position: fixed; z-index: 40; display: flex; align-items: center; gap: 2px; padding: 4px; background: #17202B;
+.sel-toolbar { position: fixed; z-index: 40; max-width: calc(100vw - 16px); flex-wrap: wrap; display: flex; align-items: center; gap: 2px; padding: 4px; background: #17202B;
   border-radius: 10px; box-shadow: 0 8px 24px rgba(16,24,40,.25); color: #fff; }
 .sel-toolbar .tb { min-height: 34px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #fff; }
 .sel-toolbar .tb.icon { width: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: #B8C2CC; }
@@ -199,3 +199,27 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
 
 .setup-nav .seg button { color: #A9C4C9; }
 .setup-nav .seg button.on { color: var(--text); }
+
+/* freehand ink */
+.ink-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: visible; }
+.ink-layer .ink-mark path { pointer-events: inherit; }
+.ink-input { position: absolute; inset: 0; z-index: 5; cursor: crosshair; touch-action: none; }
+.pen-on .textLayer { pointer-events: none; }
+.pen-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--accent-line);
+  border-radius: 10px; background: var(--accent-soft); }
+.pen-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+.pen-dot.on { box-shadow: 0 0 0 2px var(--text); }
+
+/* larger targets on touch screens */
+@media (pointer: coarse) {
+  .btn, .btn.small { min-height: 44px; }
+  .chip, .seg button, .cite { min-height: 40px; }
+  .icon-btn { width: 44px; height: 44px; }
+  .sel-toolbar .tb { min-height: 44px; }
+  .sel-toolbar .tb.icon { width: 44px; }
+  .dot-btn { width: 40px; height: 44px; }
+  .ctx-menu button, .settings-nav button, .tabs button { min-height: 48px; }
+  .badge { width: 28px; height: 28px; }
+  .pen-dot { width: 38px; height: 38px; }
+  .input, textarea.input { min-height: 44px; }
+}

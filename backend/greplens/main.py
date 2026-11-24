@@ -101,6 +101,18 @@ def pause_models(body: dict):
     return models.pause(bool(body.get("paused", True)))
 
 
+class ScanBody(BaseModel):
+    folder: str
+
+
+@app.post("/api/models/scan")
+def scan_models(body: ScanBody):
+    try:
+        return {"existing": models.scan_folder(body.folder.strip().strip('"')), "folder": body.folder}
+    except FileNotFoundError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class ReuseBody(BaseModel):
     model_id: str
     path: str
@@ -237,6 +249,7 @@ class NoteBody(BaseModel):
     tags: list[str] = []
     ai_answer: bool = False
     location: str | None = None
+    ink: list = []                   # freehand strokes: [{"color", "width", "points": [[x, y], ...]}] (page-relative 0..1)
 
 
 @app.get("/api/documents/{doc_id}/notes")
@@ -259,7 +272,7 @@ def create_note(body: NoteBody):
 @app.patch("/api/notes/{note_id}")
 def update_note(note_id: str, body: dict):
     _must("notes", note_id)
-    allowed = {"body", "category", "status", "tags", "color", "mark"}
+    allowed = {"body", "category", "status", "tags", "color", "mark", "ink"}
     db.update("notes", note_id, {k: v for k, v in body.items() if k in allowed} | {"updated": db.now()})
     return db.get("notes", note_id)
 

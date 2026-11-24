@@ -10,7 +10,7 @@ type Hardware = {
   measured: Record<string, number>;
 };
 type ManifestModel = { id: string; role: string; name: string; use: string; size_gb: number };
-type Existing = { model_id: string; path: string; source: string; label: string; ollama_name?: string; size_gb: number };
+export type Existing = { model_id: string; role?: string; path: string; source: string; label: string; ollama_name?: string; size_gb: number };
 type ModelsInfo = { manifest: ManifestModel[]; installed: Record<string, { id: string }>; existing: Existing[] };
 type Progress = { paused: boolean; items: Record<string, { status: string; done_bytes: number; total: number; speed: number; message: string }> };
 
@@ -24,6 +24,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   const [folder, setFolder] = useState("");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState("");
+  const [scanFolder, setScanFolder] = useState("");
+  const [scanMsg, setScanMsg] = useState("");
 
   useEffect(() => {
     api.get<Hardware>("/api/hardware").then((h) => {
@@ -54,9 +56,20 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     await api.post("/api/models/reuse", { model_id: e.model_id, path: e.path, source: e.source, ollama_name: e.ollama_name });
     setReused((r) => ({ ...r, [e.model_id]: e }));
   };
+  const scan = async () => {
+    setScanMsg("");
+    try {
+      const r = await api.post<{ existing: Existing[] }>("/api/models/scan", { folder: scanFolder });
+      setInfo((i) => i ? { ...i, existing: r.existing } : i);
+      setFolder(scanFolder.trim());
+      const found = r.existing.filter((e) => e.path.toLowerCase().startsWith(scanFolder.trim().toLowerCase())).length;
+      setScanMsg(t("scanResult", { n: found }));
+    } catch (e) { setScanMsg(String(e).replace(/^Error: /, "")); }
+  };
   const startDownload = async () => {
     setError("");
     try {
+      await api.patch("/api/settings", { models_dir: folder.trim() }); // remember the folder even when nothing downloads
       if (toDownload.length) setProgress(await api.post<Progress>("/api/models/download", { ids: toDownload.map((m) => m.id), folder }));
       setStep(4);
     } catch (e) { setError(String(e)); }
@@ -119,6 +132,16 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           {step === 2 && info && (
             <>
               <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("chooseModels")}</h1><p className="muted" style={{ margin: 0 }}>{t("chooseModelsHint")}</p></div>
+              <div className="card col" style={{ background: "#F6F8FA" }}>
+                <strong>{t("haveFiles")}</strong>
+                <span className="muted small">{t("haveFilesHint")}</span>
+                <div className="row">
+                  <input className="input grow" dir="ltr" placeholder="D:\dev\GrepLens\Models" value={scanFolder}
+                    onChange={(e) => setScanFolder(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scanFolder.trim() && scan()} />
+                  <button className="btn big" disabled={!scanFolder.trim()} onClick={scan}>{t("scanFolder")}</button>
+                </div>
+                {scanMsg && <span className="small">{scanMsg}</span>}
+              </div>
               {info.existing.filter((e) => picked[e.model_id]).map((e) => (
                 <div key={e.path} className="row card" style={{ background: "#EEF6EE", borderColor: "#BFDFC4" }}>
                   <span style={{ color: "#1F6B3A" }}><IconCheck size={18} /></span>

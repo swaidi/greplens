@@ -58,6 +58,11 @@ const en = {
   checkNow: "Check now", upToDate: "GrepLens is up to date.", version: "Version", yourName: "Your name on notes",
   modelUpdate: "A newer recommended model is available: {n} ({g} GB).",
   engineMissing: "AI models are not installed yet.", openSetup: "Open setup",
+  haveFiles: "Already have model files?", haveFilesHint: "Enter the folder that holds your .gguf files, then click Scan folder.",
+  scanFolder: "Scan folder", scanResult: "{n} model file(s) found in this folder.",
+  useFile: "Use this file", modelFilesHint: "Point GrepLens to model files already on this computer.",
+  touchHint: "Pen", penTool: "Pen", penDone: "Done", penUndo: "Undo", penColor: "Pen color", inkNote: "Ink note",
+  penHint: "Draw on the page with a pen, finger or mouse. Click Done to save.", penPdfOnly: "Freehand drawing is available on PDF documents.",
   translation: "Translation", glossaryTerm: "Glossary term · used consistently", contextLabel: "Context",
 };
 export type Key = keyof typeof en;
@@ -120,6 +125,11 @@ const ar: Record<Key, string> = {
   checkNow: "تحقق الآن", upToDate: "GrepLens محدّث.", version: "الإصدار", yourName: "اسمك على الملاحظات",
   modelUpdate: "يتوفر نموذج موصى به أحدث: {n} ({g} غيغابايت).",
   engineMissing: "لم تُثبَّت نماذج الذكاء الاصطناعي بعد.", openSetup: "فتح الإعداد",
+  haveFiles: "لديك ملفات النماذج مسبقًا؟", haveFilesHint: "أدخل المجلد الذي يحتوي ملفات ‎.gguf ثم اضغط فحص المجلد.",
+  scanFolder: "فحص المجلد", scanResult: "تم العثور على {n} ملف نموذج في هذا المجلد.",
+  useFile: "استخدام هذا الملف", modelFilesHint: "وجّه GrepLens إلى ملفات النماذج الموجودة على هذا الحاسوب.",
+  touchHint: "قلم", penTool: "قلم", penDone: "تم", penUndo: "تراجع", penColor: "لون القلم", inkNote: "ملاحظة بخط اليد",
+  penHint: "ارسم على الصفحة بالقلم أو الإصبع أو الفأرة، ثم اضغط تم للحفظ.", penPdfOnly: "الرسم الحر متاح في مستندات PDF.",
   translation: "الترجمة", glossaryTerm: "مصطلح من المسرد · يُستخدم بثبات", contextLabel: "السياق",
 };
 

@@ -22,7 +22,8 @@ export default function TextView({ segments, notes, numbers, activeNote, jump, o
     el.classList.add("flash-p");
   }, [jump]);
 
-  const read = (): Omit<Selection, "x" | "y"> | null => {
+  const articleRef = useRef<HTMLElement>(null);
+  const read = (): Selection | null => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
     const range = sel.getRangeAt(0);
@@ -36,14 +37,30 @@ export default function TextView({ segments, notes, numbers, activeNote, jump, o
     const quote = range.toString();
     if (!quote.trim()) return null;
     const seg = segments.find((s) => s.id === p.dataset.seg)!;
-    return { page: seg.page, rects: [], quote: quote.trim(), segment_id: seg.id, start, end: start + quote.length };
+    const box = range.getBoundingClientRect();
+    return { page: seg.page, rects: [], quote: quote.trim(), segment_id: seg.id, start, end: start + quote.length,
+      x: box.left + box.width / 2, y: box.top };
   };
+  const readRef = useRef(read);
+  readRef.current = read;
+  useEffect(() => {  // touch selection handles send no pointer release: react to a pause in selection changes
+    let timer = 0;
+    const onChange = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const s = readRef.current();
+        if (s && articleRef.current?.contains(window.getSelection()!.anchorNode)) onSelect(s);
+      }, 450);
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => { document.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
+  }, [onSelect]);
 
   let lastHeader = "";
   return (
-    <article className="text-doc" dir="auto"
-      onMouseUp={(e) => { const s = read(); if (s) onSelect({ ...s, x: e.clientX, y: e.clientY }); else if (!(e.target as HTMLElement).closest("mark")) onSelect(null); }}
-      onContextMenu={(e) => { const s = read(); if (s) { e.preventDefault(); onContext({ ...s, x: e.clientX, y: e.clientY }, e.clientX, e.clientY); } }}>
+    <article ref={articleRef} className="text-doc" dir="auto"
+      onPointerUp={(e) => { const s = read(); if (s) onSelect(s); else if (!(e.target as HTMLElement).closest("mark")) onSelect(null); }}
+      onContextMenu={(e) => { const s = read(); if (s) { e.preventDefault(); onContext(s, e.clientX, e.clientY); } }}>
       {segments.map((seg) => {
         const header = [seg.article, seg.approx_page ? `≈ Page ${seg.page}` : seg.page ? `Page ${seg.page}` : ""].filter(Boolean).join(" · ");
         const showHeader = header !== lastHeader;

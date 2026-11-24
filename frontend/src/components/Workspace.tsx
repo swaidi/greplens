@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Doc, download, normalize, Note, Segment, Workspace } from "../api";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { api, Doc, download, InkStroke, normalize, Note, Segment, Workspace } from "../api";
 import { useI18n } from "../i18n";
 import { IconChevron, IconClose, IconDoc, IconDownload, IconGear, IconHighlight, IconPlus, IconSearch, IconShare, IconUnderline, Logo } from "../icons";
 import type { View } from "../App";
@@ -34,6 +34,10 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<{ q: string; list: Segment[]; i: number }>({ q: "", list: [], i: 0 });
   const [docMenu, setDocMenu] = useState(false);
+  const [penOn, setPenOn] = useState(false);
+  const [penColor, setPenColor] = useState("#D92D20");
+  const [pending, setPending] = useState<Record<number, InkStroke[]>>({});
+  const handleSelect = useCallback((s: Selection | null) => { setSel(s); setMenu(null); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const revRef = useRef<HTMLInputElement>(null);
   const doc = docs.find((d) => d.id === docId) ?? null;
@@ -80,6 +84,28 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     setActive(note.id);
   };
 
+  const addStroke = useCallback((page: number, stroke: InkStroke) =>
+    setPending((p) => ({ ...p, [page]: [...(p[page] ?? []), stroke] })), []);
+  const undoStroke = () => setPending((p) => {
+    const pages = Object.keys(p).map(Number).filter((k) => p[k].length);
+    const last = pages[pages.length - 1];
+    return last ? { ...p, [last]: p[last].slice(0, -1) } : p;
+  });
+  const finishPen = async () => {
+    if (doc) {
+      for (const [page, strokes] of Object.entries(pending)) {
+        if (!strokes.length) continue;
+        const ys = strokes.flatMap((st) => st.points.map((pt) => pt[1]));
+        const near = segments.filter((x) => x.page === Number(page) && x.bbox?.length)
+          .sort((a, b) => Math.abs(a.bbox[1] - Math.min(...ys)) - Math.abs(b.bbox[1] - Math.min(...ys)))[0];
+        await api.post("/api/notes", { document_id: doc.id, mark: "ink", page: Number(page), ink: strokes, quote: "",
+          body: "", segment_id: near?.id ?? null, location: near?.location ?? `Page ${page}` });
+      }
+      await loadNotes();
+    }
+    setPending({}); setPenOn(false);
+  };
+
   const translate = async (s: Selection) => {
     const seg = segmentFor(s);
     setTr({ x: s.x, y: s.y, data: null });
@@ -96,7 +122,10 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   };
   const jumpToNote = (n: Note) => {
     setActive(n.id);
-    if (n.rects?.length && n.page) {
+    if (n.ink?.length && n.page) {
+      const xs = n.ink.flatMap((st) => st.points.map((p) => p[0])), ys = n.ink.flatMap((st) => st.points.map((p) => p[1]));
+      setJump({ page: n.page, box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], ts: Date.now() });
+    } else if (n.rects?.length && n.page) {
       const r = n.rects[0];
       setJump({ page: n.page, box: [r[0], r[1], r[0] + r[2], r[1] + r[3]], ts: Date.now() });
     } else jumpToSegment(n.segment_id, n.page ?? undefined);
@@ -119,7 +148,16 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   };
 
   const onPage = useCallback((n: number, total: number) => setPageInfo([n, total]), []);
-  const toolbarPos = sel ? { left: Math.min(window.innerWidth - 440, Math.max(8, sel.x - 180)), top: Math.max(8, sel.y - 64) } : null;
+  // keep the selection toolbar fully on screen, whatever its width (language, touch sizes)
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarPos, setToolbarPos] = useState<{ left: number; top: number; visibility?: "hidden" } | null>(null);
+  useLayoutEffect(() => {
+    if (!sel) { setToolbarPos(null); return; }
+    const w = toolbarRef.current?.offsetWidth ?? 460;
+    const h = toolbarRef.current?.offsetHeight ?? 44;
+    setToolbarPos({ left: Math.max(8, Math.min(window.innerWidth - w - 8, sel.x - w / 2)),
+      top: sel.y - h - 12 > 8 ? sel.y - h - 12 : sel.y + 28 });
+  }, [sel, lang]);
 
   return (
     <div className="app" onClick={() => setDocMenu(false)}>
@@ -156,6 +194,22 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           {doc?.status === "ready" && (
             <div className="doc-toolbar">
               {doc.kind === "pdf" && <span>{t("page")} <strong>{pageInfo[0]}</strong> / {pageInfo[1] || doc.pages}</span>}
+              {doc.kind === "pdf" && !penOn && (
+                <button className="btn" onClick={() => { setPenOn(true); setSel(null); }} title={t("penHint")}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+                  {t("penTool")}</button>
+              )}
+              {penOn && (
+                <div className="pen-bar" role="group" aria-label={t("penTool")}>
+                  {["#D92D20", "#1D4F91", "#17202B", "#1F6B3A"].map((c) => (
+                    <button key={c} className={`pen-dot ${penColor === c ? "on" : ""}`} style={{ background: c }}
+                      aria-label={`${t("penColor")} ${c}`} aria-pressed={penColor === c} onClick={() => setPenColor(c)} />
+                  ))}
+                  <button className="btn small" onClick={undoStroke}>{t("penUndo")}</button>
+                  <button className="btn small primary" onClick={finishPen}>{t("penDone")}</button>
+                  <span className="muted small">{t("penHint")}</span>
+                </div>
+              )}
               <span className="grow" />
               <label className="search-box"><IconSearch /><span className="sr">{t("searchDoc")}</span>
                 <input placeholder={t("searchDoc")} value={search} onChange={(e) => setSearch(e.target.value)}
@@ -174,12 +228,13 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           )}
           {doc?.status === "ready" && doc.kind === "pdf" && (
             <PdfView url={`/api/documents/${doc.id}/file`} notes={notes} numbers={numbers} activeNote={active} jump={jump}
-              onSelect={(s) => { setSel(s); setMenu(null); }} onNoteClick={(nid) => setActive(nid)} onPage={onPage}
-              onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }} />
+              onSelect={handleSelect} onNoteClick={(nid) => setActive(nid)} onPage={onPage}
+              onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }}
+              pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke }} />
           )}
           {doc?.status === "ready" && doc.kind !== "pdf" && (
             <TextView segments={segments} notes={notes} numbers={numbers} activeNote={active} jump={jump}
-              onSelect={(s) => { setSel(s); setMenu(null); }} onNoteClick={(nid) => setActive(nid)}
+              onSelect={handleSelect} onNoteClick={(nid) => setActive(nid)}
               onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }} />
           )}
         </section>
@@ -195,8 +250,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         <span>{notes.length} {t("notesCount")}</span>
       </footer>
 
-      {sel && toolbarPos && !menu && (
-        <div className="sel-toolbar" style={toolbarPos} onMouseUp={(e) => e.stopPropagation()}>
+      {sel && !menu && !penOn && (
+        <div ref={toolbarRef} className="sel-toolbar" style={toolbarPos ?? { left: 0, top: 0, visibility: "hidden" }} onPointerUp={(e) => e.stopPropagation()}>
           <button className={`tb icon ${tool === "highlight" ? "on" : ""}`} aria-label={t("highlight")} title={t("highlight")}
             onClick={() => { setTool("highlight"); createNote("highlight"); }}><IconHighlight /></button>
           <button className={`tb icon ${tool === "underline" ? "on" : ""}`} aria-label={t("underline")} title={t("underline")}

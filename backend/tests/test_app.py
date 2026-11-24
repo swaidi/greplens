@@ -214,3 +214,24 @@ def test_hardware_and_models(client, monkeypatch, tmp_path):
     from greplens import models
     found = models.detect_existing()
     assert any(f["model_id"] == "qwen3-8b" and f["source"] == "Ollama" for f in found)
+
+
+def test_ink_note_and_word_export(client, pdf_doc):
+    ink = [{"color": "#D92D20", "width": 2.5, "points": [[0.2, 0.2], [0.3, 0.25], [0.4, 0.22]]}]
+    note = client.post("/api/notes", json={"document_id": pdf_doc["id"], "mark": "ink", "page": 1, "ink": ink,
+                                           "body": "Circle this", "location": "Page 1"}).json()
+    assert note["ink"][0]["points"][1] == [0.3, 0.25]
+    resp = client.get(f"/api/documents/{pdf_doc['id']}/export.docx")
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+        assert any(n.startswith("word/media/") for n in zf.namelist())
+        assert "Circle this" in zf.read("word/comments.xml").decode()
+
+
+def test_scan_folder(client, tmp_path):
+    (tmp_path / "Qwen_Qwen3-14B-Q4_K_M.gguf").write_bytes(b"GGUF")
+    (tmp_path / "bge-m3-Q8_0.gguf").write_bytes(b"GGUF")
+    found = client.post("/api/models/scan", json={"folder": str(tmp_path)}).json()["existing"]
+    ids = {f["model_id"] for f in found if f["path"].startswith(str(tmp_path))}
+    assert ids == {"qwen3-14b", "bge-m3"}
+    assert client.get("/api/settings").json()["models_dir"] == str(tmp_path)
+    assert client.post("/api/models/scan", json={"folder": str(tmp_path / "missing")}).status_code == 400
