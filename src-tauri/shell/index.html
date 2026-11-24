@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GrepLens</title>
+<style>
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: #F3F5F7;
+    font-family: "Segoe UI", system-ui, sans-serif; color: #384250; }
+  .box { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .bar { width: 220px; height: 6px; border-radius: 999px; background: #EAEEF2; overflow: hidden; }
+  .bar div { width: 40%; height: 100%; background: #0B6576; animation: move 1.2s ease-in-out infinite; }
+  @keyframes move { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+</style>
+</head>
+<body>
+  <div class="box">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#0B6576" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/><path d="M8 10.5h5M8 8h3"/></svg>
+    <strong style="font-size: 20px; color: #17202B">GrepLens</strong>
+    <div class="bar"><div></div></div>
+    <span>Starting… · جارٍ التشغيل…</span>
+  </div>
+</body>
+</html>

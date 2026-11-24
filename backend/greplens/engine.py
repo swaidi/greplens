@@ -1,0 +1,119 @@
+"""Local AI engine: runs the bundled llama.cpp server (llama-server) per model role.
+
+Roles:
+  fast   - Q&A, translation (Qwen 8B class)
+  review - full document review (Qwen 14B class); falls back to `fast` when not installed
+  embed  - BGE-M3 embeddings
+With engine = "ollama" in settings, an existing Ollama installation is used instead.
+"""
+from __future__ import annotations
+
+import atexit
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+
+import httpx
+import psutil
+
+from .config import data_dir, load_settings, resources_dir
+
+PORTS = {"fast": 8711, "review": 8712, "embed": 8713}
+OLLAMA_URL = "http://127.0.0.1:11434"
+_procs: dict[str, subprocess.Popen] = {}
+_lock = threading.Lock()
+
+
+class EngineError(RuntimeError):
+    pass
+
+
+def server_binary() -> str | None:
+    exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    for candidate in (os.environ.get("GREPLENS_LLAMA_SERVER", ""), str(resources_dir() / "engine" / exe),
+                      str(resources_dir().parent / "engine" / exe)):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return shutil.which("llama-server")
+
+
+def threads() -> int:
+    configured = int(load_settings().get("threads") or 0)
+    return configured or max(1, psutil.cpu_count(logical=False) or os.cpu_count() or 4)
+
+
+def model_for(role: str) -> dict | None:
+    models = load_settings().get("models", {})
+    if role == "review" and not models.get("review"):
+        role = "fast"
+    return models.get(role)
+
+
+def _alive(port: int) -> bool:
+    try:
+        return httpx.get(f"http://127.0.0.1:{port}/health", timeout=2).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def endpoint(role: str) -> tuple[str, str]:
+    """Return (OpenAI-compatible base URL, model name) for a role, starting the engine if needed."""
+    settings = load_settings()
+    model = model_for(role)
+    if not model:
+        raise EngineError(f"No model is installed for '{role}'. Open Settings > Device & Models.")
+    if settings.get("engine") == "ollama" and model.get("ollama_name"):
+        return f"{OLLAMA_URL}/v1", model["ollama_name"]
+    real_role = "fast" if role == "review" and not settings.get("models", {}).get("review") else role
+    port = PORTS[real_role]
+    with _lock:
+        proc = _procs.get(real_role)
+        if proc is None or proc.poll() is not None or not _alive(port):
+            _start(real_role, model["path"], port)
+    return f"http://127.0.0.1:{port}/v1", os.path.basename(model["path"])
+
+
+def _start(role: str, model_path: str, port: int) -> None:
+    binary = server_binary()
+    if not binary:
+        raise EngineError("The AI engine (llama-server) was not found in the app folder.")
+    if not os.path.isfile(model_path):
+        raise EngineError(f"Model file not found: {model_path}")
+    args = [binary, "-m", model_path, "--host", "127.0.0.1", "--port", str(port), "-t", str(threads())]
+    if role == "embed":
+        args += ["--embedding", "--pooling", "cls", "-c", "8192", "-b", "8192", "-ub", "8192"]
+    else:
+        args += ["-c", "16384"]
+    log = open(data_dir() / "logs" / f"engine-{role}.log", "ab")
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    _procs[role] = subprocess.Popen(args, stdout=log, stderr=log, creationflags=flags)
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        if _procs[role].poll() is not None:
+            raise EngineError(f"The AI engine stopped while loading the {role} model. See logs/engine-{role}.log.")
+        if _alive(port):
+            return
+        time.sleep(1)
+    raise EngineError("The AI engine took too long to load the model.")
+
+
+def stop(role: str | None = None) -> None:
+    for name in ([role] if role else list(_procs)):
+        proc = _procs.pop(name, None)
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def status() -> dict:
+    return {role: bool(_procs.get(role) and _procs[role].poll() is None) for role in PORTS} | {
+        "binary": bool(server_binary())}
+
+
+atexit.register(stop)
