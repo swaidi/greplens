@@ -44,14 +44,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $rel = gh api repos/ggml-org/llama.cpp/releases/latest | ConvertFrom-Json
-          $asset = $rel.assets | Where-Object { $_.name -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
-          if (-not $asset) { throw "llama.cpp Windows CPU build not found in release $($rel.tag_name)" }
+          # "latest" may point to a release without engine builds, so take the newest release that has one
+          $releases = gh api "repos/ggml-org/llama.cpp/releases?per_page=40" | ConvertFrom-Json
+          $rel = $null; $asset = $null
+          foreach ($r in $releases) {
+            $a = $r.assets | Where-Object { $_.name -match "win.*cpu.*x64.*\.zip$" } | Select-Object -First 1
+            if ($a) { $rel = $r; $asset = $a; break }
+          }
+          if (-not $asset) {
+            $releases | Select-Object -First 3 | ForEach-Object { "$($_.tag_name): $(($_.assets.name) -join ', ')" }
+            throw "No llama.cpp Windows CPU build found in the last 40 releases"
+          }
+          "Using $($asset.name) from $($rel.tag_name)"
           Invoke-WebRequest $asset.browser_download_url -OutFile engine.zip
           Expand-Archive engine.zip -DestinationPath engine-tmp
           $dest = "src-tauri/resources/engine"
           Get-ChildItem engine-tmp -Recurse -File | Where-Object { $_.Extension -in ".exe", ".dll" } |
             Where-Object { $_.Name -eq "llama-server.exe" -or $_.Extension -eq ".dll" } | Copy-Item -Destination $dest
+          if (-not (Test-Path "$dest/llama-server.exe")) { throw "llama-server.exe was not found in $($asset.name)" }
           "llama.cpp $($rel.tag_name)" | Out-File "$dest/VERSION.txt"
 
       - name: Bundle OCR language data (English and Arabic)
