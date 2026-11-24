@@ -7,10 +7,12 @@ import PdfView, { colorOf } from "./PdfView";
 import TextView from "./TextView";
 import NotesPanel from "./NotesPanel";
 import AssistantPanel from "./AssistantPanel";
+import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
 export type Selection = { page: number; rects: number[][]; quote: string; segment_id: string | null; start: number | null;
   end: number | null; x: number; y: number };
 export type Jump = { page?: number; box?: number[]; segment_id?: string; ts: number };
+type OutlineItem = { level: number; label: string; title: string; page: number; segment_ids: string[]; approx?: boolean };
 type Translation = { text: string; translation: string; glossary: boolean; note: string; source: string; target: string };
 
 const COLORS = ["yellow", "green", "blue", "pink", "orange"];
@@ -37,6 +39,11 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [penOn, setPenOn] = useState(false);
   const [penColor, setPenColor] = useState("#D92D20");
   const [pending, setPending] = useState<Record<number, InkStroke[]>>({});
+  const [outline, setOutline] = useState<OutlineItem[] | null>(null);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [sectionRequest, setSectionRequest] = useState<{ segment_ids: string[]; title: string; ts: number } | null>(null);
+  const [mindMap, setMindMap] = useState<MindNode | null>(null);
+  const [quiz, setQuiz] = useState<Question[] | null>(null);
   const handleSelect = useCallback((s: Selection | null) => { setSel(s); setMenu(null); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const revRef = useRef<HTMLInputElement>(null);
@@ -59,11 +66,22 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (docId) setNotes(await api.get<Note[]>(`/api/documents/${docId}/notes`));
   }, [docId]);
   useEffect(() => {
-    setSel(null); setActive(null); setSegments([]); setNotes([]);
+    setSel(null); setActive(null); setSegments([]); setNotes([]); setOutline(null); setOutlineOpen(false);
     if (doc?.status === "ready") { api.get<Segment[]>(`/api/documents/${doc.id}/segments`).then(setSegments); loadNotes(); }
   }, [docId, doc?.status, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const numbers = useMemo(() => Object.fromEntries(notes.map((n, i) => [n.id, i + 1])), [notes]);
+  // redaction marks are drawn on the page but are not notes
+  const noteList = useMemo(() => notes.filter((n) => n.mark !== "redact"), [notes]);
+  const redactCount = notes.length - noteList.length;
+  const numbers = useMemo(() => Object.fromEntries(noteList.map((n, i) => [n.id, i + 1])), [noteList]);
+  const openOutline = async () => {
+    setOutlineOpen(!outlineOpen);
+    if (!outline && doc) setOutline(await api.get<OutlineItem[]>(`/api/documents/${doc.id}/outline`));
+  };
+  const clickMark = async (nid: string) => {
+    const n = notes.find((x) => x.id === nid);
+    if (n?.mark === "redact") { await api.del(`/api/notes/${nid}`); loadNotes(); } else setActive(nid);
+  };
 
   const segmentFor = (s: Selection): Segment | undefined => {
     if (s.segment_id) return segments.find((x) => x.id === s.segment_id);
@@ -72,18 +90,18 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     return onPage.find((x) => normalize(x.text).includes(q)) ?? onPage.find((x) => q.includes(normalize(x.text).slice(0, 40)));
   };
 
-  const createNote = async (mark: "highlight" | "underline" | null, extra: Partial<Note> = {}) => {
+  const createNote = async (mark: "highlight" | "underline" | "redact" | null, extra: Partial<Note> = {}) => {
     if (!sel || !doc) return;
     const seg = segmentFor(sel);
     const note = await api.post<Note>("/api/notes", {
-      document_id: doc.id, mark, color: mark ? color : null, page: sel.page, rects: sel.rects, quote: sel.quote,
+      document_id: doc.id, mark, color: mark && mark !== "redact" ? color : null, page: sel.page, rects: sel.rects, quote: sel.quote,
       segment_id: seg?.id ?? null, start_offset: sel.start, end_offset: sel.end, body: "", category: mark ? null : "query",
       location: seg?.location ?? (sel.page ? `Page ${sel.page}` : null), ...extra,
     });
     window.getSelection()?.removeAllRanges();
     setSel(null); setMenu(null);
     await loadNotes();
-    setActive(note.id);
+    if (mark !== "redact") setActive(note.id);
   };
 
   const addStroke = useCallback((page: number, stroke: InkStroke) =>
@@ -195,6 +213,9 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         <section className="doc-pane" aria-label="Document">
           {doc?.status === "ready" && (
             <div className="doc-toolbar">
+              <button className={`btn ${outlineOpen ? "soft" : ""}`} aria-expanded={outlineOpen} onClick={openOutline}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
+                {t("outline")}</button>
               {doc.kind === "pdf" && <span>{t("page")} <strong>{pageInfo[0]}</strong> / {pageInfo[1] || doc.pages}</span>}
               {doc.kind === "pdf" && !penOn && (
                 <button className="btn" onClick={() => { setPenOn(true); setSel(null); }} title={t("penHint")}>
@@ -220,6 +241,26 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
               </label>
             </div>
           )}
+          {outlineOpen && doc?.status === "ready" && (
+            <div className="outline-drawer" role="navigation" aria-label={t("outline")}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong>{t("outline")}</strong>
+                <button className="icon-btn" aria-label={t("close")} onClick={() => setOutlineOpen(false)}><IconClose /></button>
+              </div>
+              {!outline && <span className="muted small">…</span>}
+              {outline?.length === 0 && <span className="muted small">{t("noOutline")}</span>}
+              {outline?.map((o, i) => (
+                <div key={i} className="outline-item" style={{ paddingInlineStart: (o.level - 1) * 14 }}>
+                  <button className="outline-link" dir="auto" onClick={() => jumpToSegment(o.segment_ids[0] ?? null, o.page)}>
+                    <span>{o.label}{o.title ? ` · ${o.title}` : ""}</span><span className="muted small">{o.page}</span></button>
+                  {o.segment_ids.length > 0 && (
+                    <button className="btn small" title={t("summarizeSection")} onClick={() =>
+                      setSectionRequest({ segment_ids: o.segment_ids, title: o.title ? `${o.label} · ${o.title}` : o.label, ts: Date.now() })}>
+                      {t("summarizeShort")}</button>)}
+                </div>
+              ))}
+            </div>
+          )}
           {!doc && <div className="card muted" style={{ maxWidth: 560, marginTop: 40 }}>{t("noDocuments")}</div>}
           {doc && doc.status !== "ready" && (
             <div className="card col" style={{ width: "100%", maxWidth: 560, marginTop: 40 }}>
@@ -230,7 +271,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           )}
           {doc?.status === "ready" && doc.kind === "pdf" && (
             <PdfView url={`/api/documents/${doc.id}/file`} notes={notes} numbers={numbers} activeNote={active} jump={jump}
-              onSelect={handleSelect} onNoteClick={(nid) => setActive(nid)} onPage={onPage}
+              onSelect={handleSelect} onNoteClick={clickMark} onPage={onPage}
               onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }}
               pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke }} />
           )}
@@ -241,7 +282,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           )}
         </section>
 
-        <NotesPanel notes={notes} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
+        <NotesPanel notes={noteList} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
           onAdd={doc?.status === "ready" ? async () => {
             const page = doc.kind === "pdf" ? pageInfo[0] : 1;
             const near = segments.find((x) => x.page === page);
@@ -250,13 +291,15 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
             await loadNotes(); setActive(n.id);
           } : undefined} />
         <AssistantPanel doc={doc} workspace={ws} segments={segments} notes={notes} activeNote={active}
-          onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill} />
+          onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill}
+          page={doc?.kind === "pdf" ? pageInfo[0] : 1} sectionRequest={sectionRequest} redactCount={redactCount}
+          onOpenMindMap={setMindMap} onOpenQuiz={setQuiz} />
       </main>
 
       <footer className="statusbar">
         <span>{doc ? `${doc.filename} · ${doc.pages} ${t("page").toLowerCase()}` : ""}</span>
         {doc && doc.ocr_pages > 0 && <span>OCR: {doc.ocr_pages} · GrepAll</span>}
-        <span>{notes.length} {t("notesCount")}</span>
+        <span>{noteList.length} {t("notesCount")}</span>
       </footer>
 
       {sel && !menu && !penOn && (
@@ -277,6 +320,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           <button className="tb" onClick={() => createNote(null)}>{t("addNote")}</button>
           <button className="tb" onClick={() => { setAskPrefill({ text: sel.quote, ts: Date.now() }); setSel(null); }}>{t("askAi")}</button>
           <button className="tb accent" onClick={() => { translate(sel); setSel(null); }}>{t("translate")}</button>
+          {doc?.kind === "pdf" && sel.rects.length > 0 && <button className="tb" title={t("redactHint")} onClick={() => createNote("redact")}>{t("redact")}</button>}
         </div>
       )}
 
@@ -289,9 +333,12 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           <button onClick={() => createNote(null)}>{t("addNote")}</button>
           <button onClick={() => { setAskPrefill({ text: sel.quote, ts: Date.now() }); setMenu(null); setSel(null); }}>{t("askAi")}</button>
           <button onClick={() => { navigator.clipboard?.writeText(sel.quote); setMenu(null); }}>{t("copy")}</button>
+          {doc?.kind === "pdf" && sel.rects.length > 0 && <button onClick={() => createNote("redact")}>{t("redact")}</button>}
         </div>
       )}
 
+      {mindMap && <MindMapView map={mindMap} onJump={jumpToSegment} onClose={() => setMindMap(null)} />}
+      {quiz && <QuizView questions={quiz} onJump={jumpToSegment} onClose={() => setQuiz(null)} />}
       {tr && (
         <div className="popup" role="dialog" aria-label={t("translation")}
           style={{ left: Math.min(window.innerWidth - 336, Math.max(8, tr.x - 160)), top: Math.min(window.innerHeight - 260, tr.y + 16) }}>

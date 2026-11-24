@@ -5,6 +5,7 @@ import { IconBack, IconTrash } from "../icons";
 import type { View } from "../App";
 import type { Existing } from "./Setup";
 import { applyTheme, Theme } from "../theme";
+import { Update, UpdateOffer } from "./Home";
 
 type Hardware = { cpu: string; cores: number; ram_gb: number; dedicated_gpu: string | null; gpus: string[]; measured: Record<string, number> };
 type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string; id?: string }>; existing: Existing[];
@@ -26,6 +27,8 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
   const [editing, setEditing] = useState<Partial<Profile> | null>(null);
   const [term, setTerm] = useState({ en: "", ar: "" });
   const [updateMsg, setUpdateMsg] = useState("");
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [checking, setChecking] = useState(false);
   const [scanFolder, setScanFolder] = useState("");
   const [scanMsg, setScanMsg] = useState("");
 
@@ -184,10 +187,21 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                 <span className="col" style={{ gap: 0 }}><strong>{t("checkUpdates")}</strong><span className="muted small">{t("checkUpdatesHint")}</span></span>
                 <span className={`toggle ${settings.update_check ? "on" : ""}`} />
               </button>
-              <div className="row"><button className="btn" onClick={async () => {
-                const r = await api.get<{ available?: boolean; latest?: string; error?: string }>("/api/updates?force=true");
-                setUpdateMsg(r.error ? r.error : r.available ? t("updateAvailable", { v: r.latest ?? "" }) : t("upToDate"));
-              }}>{t("checkNow")}</button><span className="muted">{updateMsg}</span></div>
+              <div className="row wrap">
+                <button className="btn" disabled={checking} onClick={async () => {
+                  setChecking(true); setUpdateMsg(""); setUpdate(null);
+                  try {
+                    const r = await api.get<Update>("/api/updates?force=true");
+                    if (r.error) setUpdateMsg(r.error);
+                    else if (r.available) setUpdate(r);
+                    else setUpdateMsg(t("upToDate"));
+                  } catch (e) { setUpdateMsg(String(e).replace(/^Error: /, "")); }
+                  setChecking(false);
+                }}>{checking ? t("checking") : t("checkNow")}</button>
+                <span className="muted">{updateMsg}</span>
+              </div>
+              {update && <UpdateOffer update={update} inline onDismiss={() => setUpdate(null)} />}
+              <span className="muted small">{t("version")}: {update?.current ?? "—"}</span>
             </>
           )}
 

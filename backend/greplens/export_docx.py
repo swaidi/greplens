@@ -24,7 +24,7 @@ HIGHLIGHT = {"yellow": WD_COLOR_INDEX.YELLOW, "green": WD_COLOR_INDEX.BRIGHT_GRE
 
 def _items(document_id: str) -> list[dict]:
     items = []
-    for n in db.query("SELECT * FROM notes WHERE document_id = ? AND (mark IS NULL OR mark != 'ink') "
+    for n in db.query("SELECT * FROM notes WHERE document_id = ? AND (mark IS NULL OR mark NOT IN ('ink', 'redact')) "
                       "ORDER BY page, created", (document_id,)):
         label = " · ".join(x for x in [(n["category"] or "Note").capitalize(), (n["status"] or "open").capitalize(),
                                         " ".join(f"#{t}" for t in (n["tags"] or []))] if x)

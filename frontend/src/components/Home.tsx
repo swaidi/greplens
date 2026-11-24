@@ -4,21 +4,52 @@ import { useI18n } from "../i18n";
 import { IconDownload, IconGear, Logo } from "../icons";
 import type { View } from "../App";
 
-type Update = { available?: boolean; latest?: string; asset?: string | null };
+export type Update = { checked?: boolean; available?: boolean; latest?: string; asset?: string | null; error?: string; current?: string };
+type Install = { status: string; done: number; total: number; message: string };
+
+/** Shows an available update with Update now / Remind me later, and the download progress. */
+export function UpdateOffer({ update, onDismiss, inline = false }: { update: Update; onDismiss?: () => void; inline?: boolean }) {
+  const { t } = useI18n();
+  const [inst, setInst] = useState<Install | null>(null);
+  useEffect(() => {
+    if (!inst || !["downloading", "starting"].includes(inst.status)) return;
+    const timer = setInterval(() => api.get<Install>("/api/updates/progress").then(setInst), 700);
+    return () => clearInterval(timer);
+  }, [inst?.status]); // eslint-disable-line
+  const start = async () => {
+    try { setInst(await api.post<Install>("/api/updates/install", { asset: update.asset })); }
+    catch (e) { setInst({ status: "error", done: 0, total: 0, message: String(e).replace(/^Error: /, "") }); }
+  };
+  const pct = inst?.total ? Math.round((inst.done / inst.total) * 100) : 0;
+  return (
+    <div className={inline ? "card col" : "banner"} role="status" style={inline ? { borderColor: "var(--accent-line)" } : undefined}>
+      <span className="grow"><strong>{t("updateAvailable", { v: update.latest ?? "" })}</strong></span>
+      {!inst && (
+        <div className="row">
+          <button className="btn primary" disabled={!update.asset} onClick={start}>{t("updateNow")}</button>
+          <button className="btn" onClick={() => { api.post("/api/updates/later"); onDismiss?.(); }}>{t("remindLater")}</button>
+        </div>
+      )}
+      {inst && inst.status === "downloading" && (
+        <div className="col" style={{ minWidth: 240 }}>
+          <span className="small">{t("updDownloading")} {pct}%</span>
+          <div className="bar"><div style={{ width: `${pct}%` }} /></div>
+        </div>
+      )}
+      {inst && ["starting", "started"].includes(inst.status) && <span className="small">{t("updStarting")}</span>}
+      {inst && inst.status === "error" && (
+        <span className="small" style={{ color: "var(--danger-text)" }}>{inst.message}
+          <button className="btn small" style={{ marginInlineStart: 8 }} onClick={start}>{t("retry")}</button></span>
+      )}
+    </div>
+  );
+}
 
 export function UpdateBanner() {
-  const { t } = useI18n();
   const [update, setUpdate] = useState<Update | null>(null);
   useEffect(() => { api.get<Update>("/api/updates").then(setUpdate).catch(() => {}); }, []);
   if (!update?.available) return null;
-  return (
-    <div className="banner" role="status">
-      <span className="grow"><strong>{t("updateAvailable", { v: update.latest ?? "" })}</strong></span>
-      <button className="btn primary" disabled={!update.asset}
-        onClick={() => { api.post("/api/updates/install", { asset: update.asset }); setUpdate(null); }}>{t("updateNow")}</button>
-      <button className="btn" onClick={() => { api.post("/api/updates/later"); setUpdate(null); }}>{t("remindLater")}</button>
-    </div>
-  );
+  return <UpdateOffer update={update} onDismiss={() => setUpdate(null)} />;
 }
 
 export function CategoryPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {

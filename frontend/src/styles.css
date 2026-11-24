@@ -256,3 +256,29 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
 
 /* app logo: transparent background everywhere */
 .logo-img { display: block; }
+
+/* 0.1.5 tools */
+.mark.redact { background: #000 !important; mix-blend-mode: normal; opacity: .82; }
+.mark.redact:hover { opacity: .6; }
+.tool-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 12px 14px;
+  background: transparent; border: 0; color: var(--text); cursor: pointer; font: inherit; min-height: 52px; }
+.tool-head:hover { background: var(--hover); border-radius: inherit; }
+.detail-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.outline-drawer { position: fixed; top: 112px; inset-inline-start: 14px; width: 340px; max-height: calc(100vh - 170px); overflow: auto; z-index: 30;
+  display: flex; flex-direction: column; gap: 4px; padding: 12px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+.outline-item { display: flex; align-items: center; gap: 6px; }
+.outline-link { flex: 1; display: flex; justify-content: space-between; gap: 8px; text-align: start; background: transparent; border: 0;
+  color: var(--text); padding: 6px 8px; border-radius: 6px; cursor: pointer; font: inherit; min-height: 34px; }
+.outline-link:hover { background: var(--hover); }
+.mm-root { align-self: center; margin: 8px auto 14px; padding: 10px 18px; border-radius: 999px; background: var(--accent); color: #fff;
+  font-weight: 600; text-align: center; max-width: 80%; }
+.mm-branches { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.mm-branch { border: 1px solid var(--accent-line); border-radius: 10px; padding: 10px; background: var(--accent-tint); }
+.mm-branch ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: 13px; color: var(--text2); }
+.mm-node { background: transparent; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--accent-dark); cursor: pointer; text-align: start; }
+.quiz-opt { text-align: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  color: var(--text); cursor: pointer; font: inherit; min-height: 44px; }
+.quiz-opt:hover:not(:disabled) { background: var(--hover); }
+.quiz-opt.right { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-text); }
+.quiz-opt.wrong { background: var(--danger-bg); color: var(--danger-text); }

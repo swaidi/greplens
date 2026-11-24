@@ -260,3 +260,108 @@ def test_question_saved_while_answering(client, pdf_doc, monkeypatch):
     assert seen["rows"][-1]["content"] == "Pending question?" and seen["rows"][-1]["meta"]["pending"]
     rows = client.get(f"/api/documents/{pdf_doc['id']}/chat").json()
     assert all(r["content"] != "Pending question?" for r in rows)   # removed again after a failure
+
+
+def wait_job(client, job_id, timeout=120):
+    end = time.time() + timeout
+    while time.time() < end:
+        j = client.get(f"/api/jobs/{job_id}").json()
+        if j["status"] in ("done", "error", "cancelled"):
+            return j
+        time.sleep(0.3)
+    raise AssertionError("job did not finish")
+
+
+def run_job(client, doc_id, kind, params=None):
+    j = client.post(f"/api/documents/{doc_id}/jobs", json={"kind": kind, "params": params or {}}).json()
+    j = wait_job(client, j["id"])
+    assert j["status"] == "done", j["message"]
+    return j
+
+
+def test_summary_scopes(client, pdf_doc):
+    whole = run_job(client, pdf_doc["id"], "summary", {"scope": "all", "length": "brief"})
+    assert whole["result"]["text"] and whole["result"]["pages"].startswith("Page")
+    one = run_job(client, pdf_doc["id"], "summary", {"scope": "page", "start": 1})
+    assert one["result"]["pages"] == "Page 1"
+
+
+def test_outline_and_section_summary(client, pdf_doc):
+    items = client.get(f"/api/documents/{pdf_doc['id']}/outline").json()
+    labels = [i["label"] for i in items]
+    assert "Article 5" in labels and "Clause 5.1" in labels
+    art5 = next(i for i in items if i["label"] == "Article 5")
+    assert len(art5["segment_ids"]) >= 2
+    sec = run_job(client, pdf_doc["id"], "summary", {"segment_ids": art5["segment_ids"], "section_title": "Article 5"})
+    assert sec["result"]["section"] == "Article 5"
+
+
+def test_translate_document_to_word(client, pdf_doc):
+    j = run_job(client, pdf_doc["id"], "translate", {"scope": "all"})
+    assert j["result"]["target"] == "ar" and j["result"]["count"] > 3
+    resp = client.get(f"/api/jobs/{j['id']}/file")
+    assert resp.status_code == 200 and resp.content[:2] == b"PK"
+
+
+def test_mindmap_and_quiz(client, pdf_doc):
+    mm = run_job(client, pdf_doc["id"], "mindmap", {})
+    assert mm["result"]["children"] and "title" in mm["result"]["children"][0]
+    qz = run_job(client, pdf_doc["id"], "quiz", {"count": 3})
+    q = qz["result"]["questions"][0]
+    assert len(q["options"]) == 4 and 0 <= q["answer"] < 4 and q["location"]
+
+
+def test_contract_details_and_new_draft(client, pdf_doc):
+    j = run_job(client, pdf_doc["id"], "contract_details", {})
+    items = j["result"]["items"]
+    values = {i["value"] for i in items}
+    assert "SAR 1,250,000" in values and "10%" in values and "[VALUE]" in values
+    amount = next(i for i in items if i["value"] == "SAR 1,250,000")
+    assert amount["count"] == 2 and amount["locations"]
+    resp = client.post(f"/api/documents/{pdf_doc['id']}/contract-draft",
+                       json={"replacements": [{"old": "SAR 1,250,000", "new": "SAR 2,000,000"}, {"old": "[VALUE]", "new": ""}]})
+    d = docx.Document(io.BytesIO(resp.content))
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "SAR 2,000,000" in text and "SAR 1,250,000" not in text and "[VALUE]" in text
+    highlighted = [r.text for p in d.paragraphs for r in p.runs if r.font.highlight_color]
+    assert "SAR 2,000,000" in highlighted and "[VALUE]" in highlighted
+
+
+def test_tables_to_excel(client, workspace, tmp_path):
+    import openpyxl
+    pdf = pymupdf.open()
+    page = pdf.new_page()
+    rows = [["Item", "Description", "Qty", "Rate"], ["1", "Chiller", "2", "1,250,000"], ["2", "Pump", "4", "35,500"]]
+    x0, y0, cw, rh = 72, 100, 110, 24
+    for r, row in enumerate(rows):
+        for c, val in enumerate(row):
+            page.draw_rect(pymupdf.Rect(x0 + c * cw, y0 + r * rh, x0 + (c + 1) * cw, y0 + (r + 1) * rh), color=(0, 0, 0), width=0.8)
+            page.insert_text((x0 + c * cw + 4, y0 + r * rh + 16), val, fontsize=10)
+    path = tmp_path / "boq.pdf"
+    pdf.save(path)
+    with open(path, "rb") as fh:
+        doc = client.post(f"/api/workspaces/{workspace['id']}/documents", files={"file": ("boq.pdf", fh)}).json()
+    wait_ready(client, doc["id"])
+    j = run_job(client, doc["id"], "tables", {"scope": "all"})
+    assert j["result"]["tables"] == 1
+    book = openpyxl.load_workbook(io.BytesIO(client.get(f"/api/jobs/{j['id']}/file").content))
+    sheet = book["Table 1"]
+    assert sheet["B2"].value == "Chiller" and sheet["D2"].value == 1250000
+
+
+def test_redaction_removes_text(client, pdf_doc):
+    added = client.post(f"/api/documents/{pdf_doc['id']}/redact/search", json={"term": "1,250,000"}).json()["added"]
+    assert added == 2
+    data = client.get(f"/api/documents/{pdf_doc['id']}/redacted.pdf").content
+    with pymupdf.open("pdf", data) as red:
+        text = "".join(p.get_text() for p in red)
+        assert "1,250,000" not in text and "Contract Value" in text
+        assert not red.metadata.get("producer")
+    client.delete(f"/api/documents/{pdf_doc['id']}/redact")
+
+
+def test_notes_saved_into_pdf(client, pdf_doc):
+    data = client.get(f"/api/documents/{pdf_doc['id']}/annotated.pdf").content
+    with pymupdf.open("pdf", data) as out:
+        kinds = {a.type[1] for p in out for a in p.annots()}
+    assert {"Highlight", "Underline", "Ink", "Text"} <= kinds

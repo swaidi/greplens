@@ -180,12 +180,12 @@ function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, 
       <canvas ref={canvasRef} />
       <div ref={textRef} className="textLayer" />
       {notes.map((n) => n.rects.map((r, j) => (
-        <div key={`${n.id}-${j}`} className={`mark ${n.mark === "underline" ? "underline" : ""} ${activeNote === n.id ? "active" : ""}`}
-          onClick={() => onNoteClick(n.id)} title={n.body || n.quote}
+        <div key={`${n.id}-${j}`} className={`mark ${n.mark === "underline" ? "underline" : ""} ${n.mark === "redact" ? "redact" : ""} ${activeNote === n.id ? "active" : ""}`}
+          onClick={() => onNoteClick(n.id)} title={n.mark === "redact" ? "Redaction" : n.body || n.quote}
           style={{ left: `${r[0] * 100}%`, top: `${r[1] * 100}%`, width: `${r[2] * 100}%`, height: `${r[3] * 100}%`,
-            background: colorOf(n.color), borderColor: colorOf(n.color) === "#FFC999" ? "#F08C2E" : colorOf(n.color) }} />
+            ...(n.mark === "redact" ? {} : { background: colorOf(n.color), borderColor: colorOf(n.color) === "#FFC999" ? "#F08C2E" : colorOf(n.color) }) }} />
       )))}
-      {notes.map((n) => (
+      {notes.filter((n) => n.mark !== "redact").map((n) => (
         <button key={`b-${n.id}`} className="badge" aria-label={`Note ${numbers[n.id]}`} onClick={() => onNoteClick(n.id)}
           style={{ right: -34, top: `calc(${n.rects[0][1] * 100}% - 2px)`, background: colorOf(n.color) }}>{numbers[n.id]}</button>
       ))}

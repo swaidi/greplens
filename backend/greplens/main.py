@@ -16,12 +16,13 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, export_docx, hardware, ingest, models, package, profiles, qa, review, translate, updates
+from . import __version__, db, engine, jobs, tools, export_docx, hardware, ingest, models, package, profiles, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
 async def lifespan(_app):
     db.init()
+    jobs.init()
     for doc in db.query("SELECT id FROM documents WHERE status NOT IN ('ready', 'error')"):
         ingest.enqueue(doc["id"])  # finish imports interrupted by closing the app
     review.resume_interrupted()
@@ -140,7 +141,14 @@ def update_later():
 
 @app.post("/api/updates/install")
 def update_install(body: dict):
-    return updates.install(body["asset"])
+    if not body.get("asset"):
+        raise HTTPException(400, "This release has no installer for this system.")
+    return updates.start_install(body["asset"])
+
+
+@app.get("/api/updates/progress")
+def update_progress():
+    return updates.progress()
 
 
 # ------------------------------------------------------------------ workspaces and documents
@@ -410,6 +418,97 @@ async def import_package(file: UploadFile = File(...)):
         return package.import_package(await file.read())
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+# ------------------------------------------------------------------ document tools
+class JobBody(BaseModel):
+    kind: str          # summary | translate | mindmap | quiz | contract_details | tables
+    params: dict = {}
+
+
+def _ready(doc_id: str) -> dict:
+    doc = _must("documents", doc_id)
+    if doc["status"] != "ready":
+        raise HTTPException(409, "The document is still being prepared.")
+    return doc
+
+
+@app.post("/api/documents/{doc_id}/jobs")
+def start_job(doc_id: str, body: JobBody):
+    _ready(doc_id)
+    try:
+        return jobs.start(doc_id, body.kind, body.params)
+    except KeyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/documents/{doc_id}/jobs")
+def document_jobs(doc_id: str):
+    return jobs.latest(doc_id)
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    return _must("jobs", job_id)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    jobs.cancel(job_id)
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/file")
+def job_file(job_id: str):
+    path = tools.output_file(_must("jobs", job_id))
+    if not path or not path.exists():
+        raise HTTPException(404, "No file for this task.")
+    return FileResponse(path, filename=path.name.split("-", 1)[1])
+
+
+@app.get("/api/documents/{doc_id}/outline")
+def document_outline(doc_id: str):
+    _ready(doc_id)
+    return tools.outline(doc_id)
+
+
+@app.post("/api/documents/{doc_id}/redact/search")
+def redact_search(doc_id: str, body: dict):
+    _ready(doc_id)
+    return {"added": tools.redact_search(doc_id, str(body.get("term", "")))}
+
+
+@app.delete("/api/documents/{doc_id}/redact")
+def redact_clear(doc_id: str):
+    db.execute("DELETE FROM notes WHERE document_id = ? AND mark = 'redact'", (doc_id,))
+    return {"ok": True}
+
+
+@app.get("/api/documents/{doc_id}/redacted.pdf")
+def redacted(doc_id: str):
+    _ready(doc_id)
+    try:
+        data, name = tools.redacted_pdf(doc_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _download(data, name, "application/pdf")
+
+
+@app.get("/api/documents/{doc_id}/annotated.pdf")
+def annotated(doc_id: str, findings: bool = True):
+    _ready(doc_id)
+    try:
+        data, name = tools.annotated_pdf(doc_id, findings)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _download(data, name, "application/pdf")
+
+
+@app.post("/api/documents/{doc_id}/contract-draft")
+def contract_draft(doc_id: str, body: dict):
+    _ready(doc_id)
+    data, name = tools.contract_draft(doc_id, body.get("replacements", []))
+    return _download(data, name, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 
 # ------------------------------------------------------------------ interface
