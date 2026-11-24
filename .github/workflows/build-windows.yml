@@ -2,6 +2,11 @@ name: Build Windows installer
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish this build as a release (version from tauri.conf.json)"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -84,11 +89,20 @@ jobs:
           name: GrepLens-windows
           path: src-tauri/target/release/bundle/nsis/*-setup.exe
 
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "tag=v$v" >> $env:GITHUB_OUTPUT
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         uses: softprops/action-gh-release@v2
         with:
-          name: GrepLens ${{ github.ref_name }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: GrepLens ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.version.outputs.tag }}
           draft: false
           make_latest: true
           generate_release_notes: true
