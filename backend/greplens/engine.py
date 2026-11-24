@@ -25,6 +25,51 @@ PORTS = {"fast": 8711, "review": 8712, "embed": 8713}
 OLLAMA_URL = "http://127.0.0.1:11434"
 _procs: dict[str, subprocess.Popen] = {}
 _lock = threading.Lock()
+_job = None  # Windows job object: engine processes end automatically when the back end ends
+
+
+def _tie_to_backend(proc: subprocess.Popen) -> None:
+    """On Windows, put the engine in a job object that is closed (and its processes killed) when
+    this back end exits for any reason, including End task in Task Manager."""
+    global _job
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in ("ReadOperationCount", "WriteOperationCount",
+                        "OtherOperationCount", "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class BASIC_LIMIT(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+        class EXTENDED_LIMIT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BASIC_LIMIT), ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        if _job is None:
+            job = kernel32.CreateJobObjectW(None, None)
+            info = EXTENDED_LIMIT()
+            info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(wintypes.HANDLE(job), 9, ctypes.byref(info), ctypes.sizeof(info)):
+                return
+            _job = job
+        handle = kernel32.OpenProcess(0x0100 | 0x0001, False, proc.pid)  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        if handle:
+            kernel32.AssignProcessToJobObject(wintypes.HANDLE(_job), wintypes.HANDLE(handle))
+            kernel32.CloseHandle(wintypes.HANDLE(handle))
+    except Exception:
+        pass  # the engine still stops when the app closes normally
 
 
 class EngineError(RuntimeError):
@@ -90,6 +135,7 @@ def _start(role: str, model_path: str, port: int) -> None:
     log = open(data_dir() / "logs" / f"engine-{role}.log", "ab")
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     _procs[role] = subprocess.Popen(args, stdout=log, stderr=log, creationflags=flags)
+    _tie_to_backend(_procs[role])
     deadline = time.time() + 300
     while time.time() < deadline:
         if _procs[role].poll() is not None:

@@ -64,8 +64,25 @@ fn main() {
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
             if let Some(child) = handle.state::<Backend>().0.lock().unwrap().take() {
+                stop_tree(child.pid());
                 let _ = child.kill();
             }
         }
     });
+}
+
+/// Stop the back end together with the AI engine processes it started.
+#[cfg(windows)]
+fn stop_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
+#[cfg(not(windows))]
+fn stop_tree(pid: u32) {
+    let _ = std::process::Command::new("pkill").args(["-TERM", "-P", &pid.to_string()]).status();
 }

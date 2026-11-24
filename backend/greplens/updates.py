@@ -51,6 +51,8 @@ def install(asset_url: str) -> dict:
         with open(target, "wb") as fh:
             for chunk in resp.iter_bytes(1 << 20):
                 fh.write(chunk)
+    from . import engine
+    engine.stop()  # release the engine files before the installer replaces them
     if sys.platform == "win32":
         os.startfile(str(target))  # noqa: S606 - user-approved installer
     else:
