@@ -1,5 +1,5 @@
 export type Workspace = {
-  id: string; name: string; categories: string[]; created: number; updated: number;
+  id: string; name: string; categories: string[]; created: number; updated: number; provider?: string;
   documents?: number | Doc[]; notes?: number; findings?: number; authors?: number;
 };
 export type Doc = {
@@ -31,6 +31,7 @@ export type Review = {
   id: string; status: string; position: number; total: number; message: string; findings: Finding[];
   config: { categories: string[]; mode: string };
 };
+export type ProviderInfo = { id: string; name: string; model: string; default_model: string; key_hint: string; has_key: boolean; caching: boolean };
 export type Profile = { id: string; name: string; name_ar: string; persona: string; focus: string[]; builtin: boolean };
 
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -53,6 +54,7 @@ export const api = {
   get: <T>(url: string) => call<T>("GET", url),
   post: <T>(url: string, body?: unknown) => call<T>("POST", url, body ?? {}),
   patch: <T>(url: string, body: unknown) => call<T>("PATCH", url, body),
+  put: <T>(url: string, body: unknown) => call<T>("PUT", url, body),
   del: <T>(url: string) => call<T>("DELETE", url),
   upload: <T>(url: string, file: File, extra: Record<string, string> = {}) => {
     const form = new FormData();

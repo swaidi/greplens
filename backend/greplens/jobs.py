@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from . import db
+from . import db, providers
 from .ingest import doc_folder
 
 SCHEMA = """
@@ -32,6 +32,7 @@ class Job:
 
     def __init__(self, row: dict):
         self.id, self.document_id, self.params = row["id"], row["document_id"], row["params"] or {}
+        self.workspace_id = row.get("workspace_id")
 
     def progress(self, fraction: float, message: str = "") -> None:
         current = db.get("jobs", self.id)
@@ -41,14 +42,20 @@ class Job:
                                     "updated": db.now()})
 
     def output(self, name: str) -> Path:
-        folder = doc_folder(self.document_id) / "outputs"
-        folder.mkdir(exist_ok=True)
+        if self.document_id:
+            folder = doc_folder(self.document_id) / "outputs"
+        else:  # workspace-wide outputs (Create panel)
+            from .config import data_dir
+            folder = data_dir() / "workspaces" / str(self.workspace_id) / "outputs"
+        folder.mkdir(parents=True, exist_ok=True)
         return folder / f"{self.id[:8]}-{name}"
 
 
 def init() -> None:
     with db.connect() as conn:
         conn.executescript(SCHEMA)
+        if "workspace_id" not in {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}:
+            conn.execute("ALTER TABLE jobs ADD COLUMN workspace_id TEXT")  # workspace-wide jobs (0.2.0)
         conn.execute("UPDATE jobs SET status = 'error', message = 'Interrupted when GrepLens closed. Run it again.' "
                      "WHERE status IN ('queued', 'running', 'cancelling')")
 
@@ -60,11 +67,11 @@ def task(kind: str):
     return register
 
 
-def start(document_id: str, kind: str, params: dict) -> dict:
+def start(document_id: str | None, kind: str, params: dict, workspace_id: str | None = None) -> dict:
     if kind not in HANDLERS:
         raise KeyError(f"Unknown task: {kind}")
-    row = db.insert("jobs", {"document_id": document_id, "kind": kind, "params": params, "status": "queued",
-                             "progress": 0, "created": db.now(), "updated": db.now()})
+    row = db.insert("jobs", {"document_id": document_id, "workspace_id": workspace_id, "kind": kind, "params": params,
+                             "status": "queued", "progress": 0, "created": db.now(), "updated": db.now()})
     threading.Thread(target=_run, args=(row,), daemon=True, name=f"job-{kind}").start()
     return get(row["id"])
 
@@ -73,7 +80,10 @@ def _run(row: dict) -> None:
     job = Job(row)
     db.update("jobs", job.id, {"status": "running", "updated": db.now()})
     try:
-        result = HANDLERS[row["kind"]](job) or {}
+        scope = providers.use_document(row["document_id"]) if row["document_id"] else \
+            providers.use_workspace(row.get("workspace_id"))
+        with scope:
+            result = HANDLERS[row["kind"]](job) or {}
         file = result.pop("_file", None)
         db.update("jobs", job.id, {"status": "done", "progress": 1, "message": "", "result": result,
                                    "file": str(file) if file else None, "updated": db.now()})
@@ -94,4 +104,9 @@ def cancel(job_id: str) -> None:
 
 def latest(document_id: str) -> dict[str, dict]:
     rows = db.query("SELECT * FROM jobs WHERE document_id = ? ORDER BY created", (document_id,))
+    return {r["kind"]: r for r in rows}
+
+
+def latest_for_workspace(workspace_id: str) -> dict[str, dict]:
+    rows = db.query("SELECT * FROM jobs WHERE workspace_id = ? AND document_id IS NULL ORDER BY created", (workspace_id,))
     return {r["kind"]: r for r in rows}

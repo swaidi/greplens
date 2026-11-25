@@ -7,6 +7,8 @@ import PdfView, { colorOf } from "./PdfView";
 import TextView from "./TextView";
 import NotesPanel from "./NotesPanel";
 import AssistantPanel from "./AssistantPanel";
+import AiPicker from "./AiPicker";
+import InstructionsDialog from "./InstructionsDialog";
 import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
 export type Selection = { page: number; rects: number[][]; quote: string; segment_id: string | null; start: number | null;
@@ -44,6 +46,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [sectionRequest, setSectionRequest] = useState<{ segment_ids: string[]; title: string; ts: number } | null>(null);
   const [mindMap, setMindMap] = useState<MindNode | null>(null);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [pendingJump, setPendingJump] = useState<{ doc: string; segment_id: string | null; page?: number } | null>(null);
   const handleSelect = useCallback((s: Selection | null) => { setSel(s); setMenu(null); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const revRef = useRef<HTMLInputElement>(null);
@@ -140,6 +144,17 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (seg) setJump({ page: seg.page, box: seg.bbox?.length ? seg.bbox : undefined, segment_id: seg.id, ts: Date.now() });
     else if (page) setJump({ page, ts: Date.now() });
   };
+  // citations from the Create panel can point to another document: open it, then jump
+  const jumpToDoc = (documentId: string, segmentId: string | null, page?: number) => {
+    if (documentId === docId) jumpToSegment(segmentId, page);
+    else { setPendingJump({ doc: documentId, segment_id: segmentId, page }); setDocId(documentId); }
+  };
+  useEffect(() => {
+    if (pendingJump && pendingJump.doc === docId && segments.length) {
+      jumpToSegment(pendingJump.segment_id, pendingJump.page);
+      setPendingJump(null);
+    }
+  }, [pendingJump, docId, segments]); // eslint-disable-line react-hooks/exhaustive-deps
   const jumpToNote = (n: Note) => {
     setActive(n.id);
     if (n.ink?.length && n.page) {
@@ -184,6 +199,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       <header className="topbar">
         <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
         <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
+        {ws && <AiPicker ws={ws} onChange={(w) => setWs({ ...ws, ...w, documents: ws.documents })} />}
+        <button className="btn" onClick={() => setShowInstructions(true)} title={t("instructionsHint")}>{t("instructionsBtn")}</button>
         <div style={{ position: "relative" }}>
           <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
             <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>
@@ -293,7 +310,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         <AssistantPanel doc={doc} workspace={ws} segments={segments} notes={notes} activeNote={active}
           onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill}
           page={doc?.kind === "pdf" ? pageInfo[0] : 1} sectionRequest={sectionRequest} redactCount={redactCount}
-          onOpenMindMap={setMindMap} onOpenQuiz={setQuiz} />
+          onOpenMindMap={setMindMap} onOpenQuiz={setQuiz} onJumpDoc={jumpToDoc} />
       </main>
 
       <footer className="statusbar">
@@ -337,6 +354,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         </div>
       )}
 
+      {showInstructions && <InstructionsDialog workspaceId={id} onClose={() => setShowInstructions(false)} />}
       {mindMap && <MindMapView map={mindMap} onJump={jumpToSegment} onClose={() => setMindMap(null)} />}
       {quiz && <QuizView questions={quiz} onJump={jumpToSegment} onClose={() => setQuiz(null)} />}
       {tr && (

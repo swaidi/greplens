@@ -62,7 +62,8 @@ def connect():
         conn.close()
 
 
-MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'"), ("notes", "handwriting", "TEXT DEFAULT '[]'")]
+MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'"), ("notes", "handwriting", "TEXT DEFAULT '[]'"),
+              ("workspaces", "provider", "TEXT DEFAULT 'local'")]
 
 
 def init() -> None:

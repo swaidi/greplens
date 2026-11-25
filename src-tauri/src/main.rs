@@ -48,6 +48,7 @@ fn main() {
             app.manage(Backend(Mutex::new(child)));
 
             let window = app.get_webview_window("main").expect("main window");
+            set_title_bar_logo(&window);
             std::thread::spawn(move || {
                 let start = Instant::now();
                 while !backend_ready() && start.elapsed() < Duration::from_secs(120) {
@@ -70,6 +71,28 @@ fn main() {
         }
     });
 }
+
+/// The title bar shows the in-app logo (no background); the desktop shortcut and the taskbar keep
+/// the app icon (logo on the gradient circle). Only the small window icon is replaced.
+#[cfg(windows)]
+fn set_title_bar_logo(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateIconFromResourceEx, GetSystemMetrics, SendMessageW, ICON_SMALL, LR_DEFAULTCOLOR, SM_CXSMICON, SM_CYSMICON,
+        WM_SETICON,
+    };
+    const LOGO: &[u8] = include_bytes!("../icons/window-logo.png");
+    let Ok(hwnd) = window.hwnd() else { return };
+    unsafe {
+        let icon = CreateIconFromResourceEx(LOGO.as_ptr(), LOGO.len() as u32, 1, 0x0003_0000,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+        if !icon.is_null() {
+            SendMessageW(hwnd.0 as _, WM_SETICON, ICON_SMALL as usize, icon as isize);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn set_title_bar_logo(_window: &tauri::WebviewWindow) {}
 
 /// Stop the back end together with the AI engine processes it started.
 #[cfg(windows)]

@@ -26,7 +26,8 @@ def export(workspace_id: str) -> tuple[bytes, str]:
         findings += db.query("SELECT * FROM findings WHERE document_id = ?", (d["id"],))
     manifest = {"format": FORMAT, "version": 1, "app": __version__, "workspace": ws,
                 "documents": [{k: d[k] for k in ("id", "filename", "kind", "sha256", "revision_of", "created")} for d in docs],
-                "notes": notes, "reviews": reviews, "findings": findings}
+                "notes": notes, "reviews": reviews, "findings": findings,
+                "instructions": db.query("SELECT * FROM instructions WHERE workspace_id = ?", (workspace_id,))}
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
@@ -43,7 +44,7 @@ def import_package(data: bytes) -> dict:
         ws = manifest["workspace"]
         added = {"documents": 0, "notes": 0, "findings": 0}
         if not db.get("workspaces", ws["id"]):
-            db.insert("workspaces", {**ws, "updated": db.now()})
+            db.insert("workspaces", {**ws, "provider": "local", "updated": db.now()})  # each user picks their own AI
         doc_map: dict[str, str] = {}
         for d in manifest["documents"]:
             existing = db.query("SELECT id FROM documents WHERE workspace_id = ? AND sha256 = ?", (ws["id"], d["sha256"]))
@@ -70,4 +71,7 @@ def import_package(data: bytes) -> dict:
             if not db.get("findings", f["id"]):
                 db.insert("findings", {**f, "document_id": doc_map.get(f["document_id"], f["document_id"])})
                 added["findings"] += 1
+        for ins in manifest.get("instructions", []):
+            if not db.get("instructions", ins["id"]):
+                db.insert("instructions", {**ins, "workspace_id": ws["id"]})
     return {"workspace_id": ws["id"], "name": ws["name"], **added}

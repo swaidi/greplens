@@ -1,6 +1,6 @@
 [package]
 name = "greplens"
-version = "0.1.5"
+version = "0.2.0"
 description = "GrepLens: offline document review with local AI"
 authors = ["A.T.Grep"]
 license = "AGPL-3.0-only"
@@ -12,6 +12,9 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 strip = true

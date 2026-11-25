@@ -4,15 +4,17 @@ import { Key, useI18n } from "../i18n";
 import { IconDoc } from "../icons";
 import { CategoryPicker } from "./Home";
 import ToolsTab, { MindNode, Question } from "./Tools";
+import CreatePanel from "./CreatePanel";
 
 type Props = { doc: Doc | null; workspace: Workspace | null; segments: Segment[]; notes: Note[]; activeNote: string | null;
   onJump: (segmentId: string | null, page?: number) => void; reloadNotes: () => void; prefill: { text: string; ts: number } | null;
   page: number; sectionRequest: { segment_ids: string[]; title: string; ts: number } | null; redactCount: number;
-  onOpenMindMap: (m: MindNode) => void; onOpenQuiz: (q: Question[]) => void };
+  onOpenMindMap: (m: MindNode) => void; onOpenQuiz: (q: Question[]) => void;
+  onJumpDoc: (documentId: string, segmentId: string | null, page?: number) => void };
 
 export default function AssistantPanel(props: Props) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"ask" | "review" | "tools">("ask");
+  const [tab, setTab] = useState<"ask" | "review" | "tools" | "create">("ask");
   const [cats, setCats] = useState<string[]>([]);
   useEffect(() => { if (props.workspace) setCats(props.workspace.categories ?? []); }, [props.workspace?.id]); // eslint-disable-line
   useEffect(() => { if (props.prefill) setTab("ask"); }, [props.prefill]);
@@ -23,8 +25,10 @@ export default function AssistantPanel(props: Props) {
         <button role="tab" aria-selected={tab === "ask"} className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>{t("ask")}</button>
         <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{t("review")}</button>
         <button role="tab" aria-selected={tab === "tools"} className={tab === "tools" ? "on" : ""} onClick={() => setTab("tools")}>{t("tools")}</button>
+        <button role="tab" aria-selected={tab === "create"} className={tab === "create" ? "on" : ""} onClick={() => setTab("create")}>{t("createTab")}</button>
       </div>
-      {props.doc?.status !== "ready" ? <div className="muted small" style={{ padding: 16 }}>{props.doc ? t("preparing") : t("noDocuments")}</div>
+      {tab === "create" ? (props.workspace ? <CreatePanel workspace={props.workspace} onJumpDoc={props.onJumpDoc} /> : null)
+        : props.doc?.status !== "ready" ? <div className="muted small" style={{ padding: 16 }}>{props.doc ? t("preparing") : t("noDocuments")}</div>
         : tab === "ask" ? <AskTab {...props} cats={cats} setCats={setCats} />
         : tab === "review" ? <ReviewTab {...props} cats={cats} setCats={setCats} />
         : <ToolsTab doc={props.doc!} page={props.page} onJump={props.onJump} reloadNotes={props.reloadNotes} sectionRequest={props.sectionRequest}
@@ -181,9 +185,18 @@ function AnswerCard({ a, onJump, onSave, onLink }: { a: Answer; onJump: Props["o
   );
 }
 
-function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
-  const { t } = useI18n();
-  const [mode, setMode] = useState<"open" | "checklist" | "instruction">("open");
+type Preset = { id: string; name: string; name_ar: string; categories: string[]; items: string[] };
+
+function ReviewTab({ doc, workspace, cats, setCats, onJump, reloadNotes }: TabProps) {
+  const { t, lang } = useI18n();
+  const [mode, setMode] = useState<"open" | "checklist" | "checklist_items" | "instruction" | "compare">("open");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [compareWith, setCompareWith] = useState("");
+  const [structure, setStructure] = useState(true);
+  useEffect(() => { api.get<Preset[]>("/api/checklists").then(setPresets).catch(() => {}); }, []);
+  const others = (Array.isArray(workspace?.documents) ? workspace!.documents as Doc[] : [])
+    .filter((d) => d.id !== doc?.id && d.status === "ready");
+  const isChecklist = mode === "checklist" || mode === "checklist_items";
   const [checklist, setChecklist] = useState("");
   const [instruction, setInstruction] = useState("");
   const [review, setReview] = useState<Review | null>(null);
@@ -205,7 +218,8 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
     setError("");
     try {
       const r = await api.post<Review>(`/api/documents/${doc.id}/reviews`, {
-        categories: cats, mode, instruction, checklist: checklist.split("\n").map((x) => x.trim()).filter(Boolean) });
+        categories: cats, mode, instruction, checklist: checklist.split("\n").map((x) => x.trim()).filter(Boolean),
+        compare_with: compareWith, structure });
       setReview({ ...r, findings: [] });
     } catch (e) { setError(String(e)); }
   };
@@ -225,6 +239,8 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
   const running = review && ["running", "queued", "pausing"].includes(review.status);
   const modes: { id: typeof mode; label: Key; desc: Key }[] = [
     { id: "open", label: "openEnded", desc: "openDesc" }, { id: "checklist", label: "checklist", desc: "checklistDesc" },
+    { id: "checklist_items", label: "checklistItems", desc: "checklistItemsDesc" },
+    { id: "compare", label: "compareMode", desc: "compareDesc" },
     { id: "instruction", label: "instruction", desc: "instructionDesc" }];
 
   return (
@@ -241,8 +257,17 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
             <span className="radio" /><span className="col" style={{ gap: 2 }}><strong>{t(m.label)}</strong><span className="muted small">{t(m.desc)}</span></span>
           </button>
         ))}
-        {mode === "checklist" && (
+        {isChecklist && (
           <div className="col card" style={{ background: "var(--soft2)" }}>
+            {presets.length > 0 && (
+              <select className="input" aria-label={t("checklistPresets")} value="" onChange={(e) => {
+                const p = presets.find((x) => x.id === e.target.value);
+                if (p) { setChecklist(p.items.join("\n")); if (p.categories?.length) setCats(p.categories.slice(0, 2)); }
+              }}>
+                <option value="">{t("checklistPresets")}</option>
+                {presets.map((p) => <option key={p.id} value={p.id}>{lang === "ar" ? p.name_ar : p.name} ({p.items.length})</option>)}
+              </select>
+            )}
             <textarea className="input" rows={5} dir="auto" placeholder={t("checklistPlaceholder")} value={checklist}
               onChange={(e) => setChecklist(e.target.value)} />
             <input ref={fileRef} type="file" accept=".txt,.md,.csv" hidden onChange={async (e) => {
@@ -260,13 +285,28 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
             </div>
           </div>
         )}
+        {mode === "compare" && (
+          <label className="col card" style={{ background: "var(--soft2)" }}><span className="muted small">{t("compareWith")}</span>
+            <select className="input" value={compareWith} onChange={(e) => setCompareWith(e.target.value)}>
+              <option value="">{others.length ? t("chooseReference") : t("noOtherDocs")}</option>
+              {others.map((d) => <option key={d.id} value={d.id}>{d.filename}</option>)}
+            </select>
+            <span className="muted small">{t("compareHint")}</span>
+          </label>
+        )}
+        {doc?.kind === "docx" && (
+          <button className="mode-card" style={{ justifyContent: "space-between" }} aria-pressed={structure} onClick={() => setStructure(!structure)}>
+            <span className="col" style={{ gap: 0 }}><strong>{t("wordChecks")}</strong><span className="muted small">{t("wordChecksHint")}</span></span>
+            <span className={`toggle ${structure ? "on" : ""}`} />
+          </button>
+        )}
         {mode === "instruction" && (
           <label className="col"><span className="muted small">{t("instructionLabel")}</span>
             <textarea className="input" rows={3} dir="auto" value={instruction} onChange={(e) => setInstruction(e.target.value)} /></label>
         )}
       </div>
       <div className="col">
-        <button className="btn big primary" disabled={!!running || (mode === "checklist" && !checklist.trim()) || (mode === "instruction" && !instruction.trim())}
+        <button className="btn big primary" disabled={!!running || (isChecklist && !checklist.trim()) || (mode === "instruction" && !instruction.trim()) || (mode === "compare" && !compareWith)}
           onClick={run}>{t("runReview")}</button>
         <span className="muted small" style={{ textAlign: "center" }}>{t("estimate")}</span>
       </div>

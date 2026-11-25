@@ -4,8 +4,8 @@ Offline document review, Q&A and annotation with local AI models. Arabic and Eng
 
 GrepLens reads PDF, Word, Excel, PowerPoint and text files; answers questions with exact citations;
 runs category-based reviews (Legal, Engineering, Students, Technology, General, or your own);
-and lets you highlight, underline and add margin notes. Everything runs on your own computer:
-no document leaves it.
+and lets you highlight, underline and add margin notes. By default everything runs on your own computer
+and no document leaves it; a workspace can optionally use a cloud AI (Claude, OpenAI or Gemini) instead.
 
 ## Features
 
@@ -18,7 +18,19 @@ no document leaves it.
 - **Review (LangGraph):** open-ended by category (two can be combined), a fixed checklist, or a specific
   instruction. Each finding is verified against the real text before it is shown; rule checks flag
   placeholders left blank, cross-references to missing clauses, and amounts stated more than once.
-  Reviews run in the background and can be paused and resumed.
+  Reviews run in the background and can be paused and resumed. More modes: **one check at a time**
+  (each checklist item is searched across the whole document), and **compare with a reference** (another
+  document in the workspace, section by section, plus articles missing from the draft). Ready checklists:
+  Works Contract Review and Research Paper Check. Word files also get **formatting checks**: typed numbers
+  instead of automatic numbering, empty lines used for spacing, uneven indentation, tables past the margin.
+- **Create (across documents):** summary and briefing, study guide with FAQ and glossary, flashcards and quiz,
+  comparison table, timeline, mind map, literature review draft, and slide outline. Every point links back
+  to its source; each output exports to Word.
+- **Workspace instructions:** attach rules or reference files (.txt, .md, .docx, .pdf); Ask, Review and Create
+  follow them. With the local AI only the most relevant parts are used; a cloud AI receives the whole file.
+- **AI providers (optional):** Settings > AI Providers. Keys are stored in the system's secure store
+  (Windows Credential Manager), never in GrepLens files or packages. Each workspace chooses Local AI (default)
+  or a provider; search stays local, and Claude uses prompt caching.
 - **Mark up:** highlight or underline in five colors, margin notes with categories (Risk, Query,
   Clarification, Action, Info), Open/Resolved status and tags. Notes carry over to a revised version.
 - **Translate:** select a word or phrase, then right-click or use the toolbar. Arabic ↔ English with the
@@ -40,6 +52,7 @@ no document leaves it.
 | Review workflow | LangGraph (`backend/greplens/review`) |
 | AI engine | llama.cpp `llama-server` (bundled), or an existing Ollama installation |
 | Models | Qwen3 8B (Q&A, translation), Qwen3 14B (review), BGE-M3 (search); list in `models.json` |
+| Cloud AI (optional) | LiteLLM (Claude, OpenAI, Gemini), keys in `keyring` |
 | OCR | GrepAll engine (PyMuPDF + Tesseract language data) |
 | Storage | SQLite and Chroma in the user data folder; models in a folder the user chooses |
 
