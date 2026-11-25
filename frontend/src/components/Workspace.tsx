@@ -7,6 +7,7 @@ import PdfView, { colorOf } from "./PdfView";
 import TextView from "./TextView";
 import NotesPanel from "./NotesPanel";
 import AssistantPanel from "./AssistantPanel";
+import AiPicker from "./AiPicker";
 import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
 export type Selection = { page: number; rects: number[][]; quote: string; segment_id: string | null; start: number | null;
@@ -184,6 +185,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       <header className="topbar">
         <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
         <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
+        {ws && <AiPicker ws={ws} onChange={(w) => setWs({ ...ws, ...w })} />}
         <div style={{ position: "relative" }}>
           <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
             <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>

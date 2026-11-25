@@ -24,7 +24,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .. import db, engine, llm, profiles
+from .. import db, engine, llm, profiles, providers
 from ..ingest import segments_of
 
 SECTION_CHARS = 6000
@@ -226,7 +226,8 @@ def start(document_id: str, config: dict) -> dict:
 def _launch(review_id: str, document_id: str) -> None:
     def run():
         try:
-            GRAPH.invoke({"review_id": review_id, "document_id": document_id}, {"recursion_limit": 100_000})
+            with providers.use_document(document_id):
+                GRAPH.invoke({"review_id": review_id, "document_id": document_id}, {"recursion_limit": 100_000})
             if db.get("reviews", review_id)["status"] == "pausing":
                 db.update("reviews", review_id, {"status": "paused", "message": "Paused"})
         except Exception as exc:

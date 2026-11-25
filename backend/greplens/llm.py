@@ -1,4 +1,8 @@
-"""Chat and embedding calls to the local engine (OpenAI-compatible API)."""
+"""Chat and embedding calls.
+
+Chat goes to the local engine (OpenAI-compatible API), or to the cloud provider the workspace chose
+(see providers.py). Embeddings always stay on the local engine.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -9,7 +13,7 @@ from typing import Callable
 
 import httpx
 
-from . import engine
+from . import engine, providers
 from .config import FAKE_AI
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.S)
@@ -17,6 +21,10 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 
 def chat(role: str, messages: list[dict], *, max_tokens: int = 900, temperature: float = 0.2,
          json_mode: bool = False, fake: Callable[[], str] | None = None) -> str:
+    provider = providers.current()
+    if provider != providers.LOCAL:  # the workspace uses a cloud AI (Settings > AI Providers)
+        text = providers.chat(provider, messages, max_tokens=max_tokens, temperature=temperature, json_mode=json_mode)
+        return THINK_RE.sub("", text).strip()
     if FAKE_AI:
         return fake() if fake else "OK"
     base, model = engine.endpoint(role)

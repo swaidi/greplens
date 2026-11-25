@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 from typing import Callable
 
-from . import db
+from . import db, providers
 from .ingest import doc_folder
 
 SCHEMA = """
@@ -73,7 +73,8 @@ def _run(row: dict) -> None:
     job = Job(row)
     db.update("jobs", job.id, {"status": "running", "updated": db.now()})
     try:
-        result = HANDLERS[row["kind"]](job) or {}
+        with providers.use_document(row["document_id"]):
+            result = HANDLERS[row["kind"]](job) or {}
         file = result.pop("_file", None)
         db.update("jobs", job.id, {"status": "done", "progress": 1, "message": "", "result": result,
                                    "file": str(file) if file else None, "updated": db.now()})

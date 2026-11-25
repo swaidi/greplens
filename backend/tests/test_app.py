@@ -365,3 +365,78 @@ def test_notes_saved_into_pdf(client, pdf_doc):
     with pymupdf.open("pdf", data) as out:
         kinds = {a.type[1] for p in out for a in p.annots()}
     assert {"Highlight", "Underline", "Ink", "Text"} <= kinds
+
+
+# ------------------------------------------------------------------ cloud AI providers
+class MemoryKeyring:
+    """Stand-in for the system's secure store."""
+    priority = 1
+
+    def __init__(self):
+        self.store = {}
+
+    def set_password(self, service, user, password):
+        self.store[(service, user)] = password
+
+    def get_password(self, service, user):
+        return self.store.get((service, user))
+
+    def delete_password(self, service, user):
+        self.store.pop((service, user), None)
+
+
+@pytest.fixture()
+def fake_cloud(monkeypatch):
+    import keyring
+    import litellm
+    from types import SimpleNamespace
+    ring = MemoryKeyring()
+    monkeypatch.setattr(keyring, "set_password", ring.set_password)
+    monkeypatch.setattr(keyring, "get_password", ring.get_password)
+    monkeypatch.setattr(keyring, "delete_password", ring.delete_password)
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs)
+        user = kwargs["messages"][-1]["content"]
+        if "QUESTION:" in user:
+            content = json.dumps({"found": True, "from_document": "Cloud answer: the advance payment is 10%.",
+                                  "citations": [1], "general_knowledge": ""})
+        else:
+            content = "OK"
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+    monkeypatch.setattr(litellm, "completion", completion)
+    return SimpleNamespace(ring=ring, calls=calls)
+
+
+def test_provider_keys_stay_out_of_files(client, fake_cloud):
+    from greplens.config import settings_path
+    listed = client.get("/api/providers").json()
+    assert {p["id"] for p in listed} == {"claude", "openai", "gemini"}
+    assert not any(p["has_key"] for p in listed)
+    r = client.put("/api/providers/claude", json={"api_key": "sk-ant-secret-123", "model": "claude-sonnet-5-5"}).json()
+    assert r["has_key"] and r["model"] == "claude-sonnet-5-5"
+    assert "sk-ant-secret-123" not in settings_path().read_text(encoding="utf-8")
+    assert fake_cloud.ring.get_password("GrepLens", "claude") == "sk-ant-secret-123"
+    assert client.post("/api/providers/claude/test").json()["ok"]
+
+
+def test_workspace_uses_cloud_provider(client, fake_cloud, tmp_path):
+    ws = client.post("/api/workspaces", json={"name": "Cloud review"}).json()
+    assert client.patch(f"/api/workspaces/{ws['id']}", json={"provider": "claude"}).status_code == 400  # no key yet
+    client.put("/api/providers/claude", json={"api_key": "sk-ant-x"})
+    assert client.patch(f"/api/workspaces/{ws['id']}", json={"provider": "claude"}).json()["provider"] == "claude"
+    path = tmp_path / "c.pdf"
+    make_pdf(path, scanned_page=False)
+    with open(path, "rb") as fh:
+        doc = client.post(f"/api/workspaces/{ws['id']}/documents", files={"file": ("c.pdf", fh)}).json()
+    wait_ready(client, doc["id"])
+    answer = client.post(f"/api/documents/{doc['id']}/ask", json={"question": "What is the advance payment?", "mode": "doc"}).json()
+    assert answer["from_document"].startswith("Cloud answer")
+    call = fake_cloud.calls[-1]
+    assert call["model"] == "anthropic/claude-sonnet-5-5" and call["api_key"] == "sk-ant-x"
+    assert call["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}  # prompt caching
+    # removing the key sends the workspace back to the local AI
+    client.delete("/api/providers/claude/key")
+    assert client.get(f"/api/workspaces/{ws['id']}").json()["provider"] == "local"

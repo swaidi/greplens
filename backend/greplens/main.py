@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, jobs, tools, export_docx, hardware, ingest, models, package, profiles, qa, review, translate, updates
+from . import __version__, db, engine, jobs, tools, export_docx, hardware, ingest, models, package, profiles, providers, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
@@ -151,6 +151,47 @@ def update_progress():
     return updates.progress()
 
 
+# ------------------------------------------------------------------ cloud AI providers (optional)
+class ProviderBody(BaseModel):
+    model: str | None = None
+    api_key: str | None = None
+
+
+def _provider(pid: str) -> None:
+    if pid not in providers.PROVIDERS:
+        raise HTTPException(404, "Unknown AI provider")
+
+
+@app.get("/api/providers")
+def list_providers():
+    return providers.listing()
+
+
+@app.put("/api/providers/{pid}")
+def save_provider(pid: str, body: ProviderBody):
+    _provider(pid)
+    if body.model is not None:
+        providers.set_model(pid, body.model or providers.PROVIDERS[pid]["default_model"])
+    if body.api_key:
+        providers.set_key(pid, body.api_key)
+    return next(p for p in providers.listing() if p["id"] == pid)
+
+
+@app.delete("/api/providers/{pid}/key")
+def remove_provider_key(pid: str):
+    _provider(pid)
+    providers.delete_key(pid)
+    # workspaces that used it go back to the local AI
+    db.execute("UPDATE workspaces SET provider = 'local' WHERE provider = ?", (pid,))
+    return {"ok": True}
+
+
+@app.post("/api/providers/{pid}/test")
+def test_provider(pid: str):
+    _provider(pid)
+    return providers.test(pid)
+
+
 # ------------------------------------------------------------------ workspaces and documents
 class WorkspaceBody(BaseModel):
     name: str
@@ -178,7 +219,9 @@ def create_workspace(body: WorkspaceBody):
 @app.patch("/api/workspaces/{ws_id}")
 def update_workspace(ws_id: str, body: dict):
     _must("workspaces", ws_id)
-    db.update("workspaces", ws_id, {k: v for k, v in body.items() if k in ("name", "categories")} | {"updated": db.now()})
+    if "provider" in body and body["provider"] != providers.LOCAL and body["provider"] not in providers.available():
+        raise HTTPException(400, "Save an API key for this provider first (Settings > AI Providers).")
+    db.update("workspaces", ws_id, {k: v for k, v in body.items() if k in ("name", "categories", "provider")} | {"updated": db.now()})
     return db.get("workspaces", ws_id)
 
 

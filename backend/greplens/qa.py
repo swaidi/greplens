@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from . import db, index, llm, profiles
+from . import db, index, llm, profiles, providers
 
 SYSTEM = (
     "You are GrepLens, a careful document assistant. You receive numbered SOURCES taken from one document. "
@@ -34,7 +34,8 @@ def ask(document_id: str, question: str, mode: str = "category", categories: lis
     asked = db.insert("chats", {"document_id": document_id, "role": "user", "content": question, "meta": {"pending": True},
                                 "created": db.now()})
     try:
-        return _answer(doc, document_id, question, mode, categories, history, asked)
+        with providers.use_workspace(doc["workspace_id"]):
+            return _answer(doc, document_id, question, mode, categories, history, asked)
     except Exception:
         db.execute("DELETE FROM chats WHERE id = ?", (asked["id"],))
         raise

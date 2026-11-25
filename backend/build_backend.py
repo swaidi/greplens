@@ -39,6 +39,9 @@ def main() -> None:
         "--copy-metadata", "chromadb", "--copy-metadata", "llama-index-core", "--copy-metadata", "opentelemetry-sdk",
         "--hidden-import", "tiktoken_ext.openai_public", "--hidden-import", "tiktoken_ext", "--collect-data", "tiktoken",
         "--hidden-import", "pymupdf", "--hidden-import", "openpyxl",
+        # optional cloud AI providers: LiteLLM and the secure key store (Windows Credential Manager)
+        "--collect-all", "litellm", "--copy-metadata", "litellm", "--copy-metadata", "keyring",
+        "--collect-submodules", "keyring.backends",
         "--exclude-module", "torch", "--exclude-module", "tensorflow", "--exclude-module", "matplotlib",
     ]
     if sys.platform == "win32":

@@ -43,7 +43,7 @@ def import_package(data: bytes) -> dict:
         ws = manifest["workspace"]
         added = {"documents": 0, "notes": 0, "findings": 0}
         if not db.get("workspaces", ws["id"]):
-            db.insert("workspaces", {**ws, "updated": db.now()})
+            db.insert("workspaces", {**ws, "provider": "local", "updated": db.now()})  # each user picks their own AI
         doc_map: dict[str, str] = {}
         for d in manifest["documents"]:
             existing = db.query("SELECT id FROM documents WHERE workspace_id = ? AND sha256 = ?", (ws["id"], d["sha256"]))

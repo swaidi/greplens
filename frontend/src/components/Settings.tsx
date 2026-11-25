@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Profile } from "../api";
+import { api, Profile, ProviderInfo } from "../api";
 import { Key, useI18n } from "../i18n";
 import { IconBack, IconTrash } from "../icons";
 import type { View } from "../App";
@@ -12,7 +12,7 @@ type ModelsInfo = { installed: Record<string, { name: string; path: string; sour
   updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean> };
 type Settings = { theme?: Theme; language: string; update_check: boolean; author: string; models_dir: string; engine: string };
 type Term = { id: string; en: string; ar: string };
-const SECTIONS: Key[] = ["deviceModels", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
+const SECTIONS: Key[] = ["deviceModels", "aiProviders", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
 const roleOf = (e: Existing) => (e as Existing & { role?: string }).role ?? "";
 const ROLE: Record<string, Key> = { fast: "feat_qa", review: "feat_review", embed: "feat_search" };
 
@@ -103,6 +103,8 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
               <div className="row wrap"><button className="btn primary" onClick={async () => { await api.patch("/api/settings", { setup_complete: false }); window.location.reload(); }}>{t("runSetup")}</button></div>
             </>
           )}
+
+          {section === "aiProviders" && <ProvidersSection />}
 
           {section === "appearance" && settings && (
             <div className="col">
@@ -216,5 +218,64 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
         </section>
       </div>
     </div>
+  );
+}
+
+/** Optional cloud AI. Keys go to the system's secure store (Windows Credential Manager), never to GrepLens files. */
+function ProvidersSection() {
+  const { t } = useI18n();
+  const [list, setList] = useState<ProviderInfo[]>([]);
+  const [keys, setKeys] = useState<Record<string, string>>({});
+  const [models, setModels] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [busy, setBusy] = useState("");
+  const load = () => api.get<ProviderInfo[]>("/api/providers").then((l) => {
+    setList(l); setModels(Object.fromEntries(l.map((p) => [p.id, p.model])));
+  });
+  useEffect(() => { load(); }, []);
+  const say = (id: string, ok: boolean, text: string) => setMsg((m) => ({ ...m, [id]: { ok, text } }));
+  const save = async (p: ProviderInfo) => {
+    setBusy(p.id);
+    try {
+      await api.put(`/api/providers/${p.id}`, { model: models[p.id] ?? p.model, api_key: keys[p.id] || null });
+      setKeys((k) => ({ ...k, [p.id]: "" })); say(p.id, true, t("providerSaved")); await load();
+    } catch (e) { say(p.id, false, String(e).replace(/^Error: /, "")); }
+    setBusy("");
+  };
+  const test = async (p: ProviderInfo) => {
+    setBusy(p.id); say(p.id, true, t("checking"));
+    try { const r = await api.post<{ reply: string; model: string }>(`/api/providers/${p.id}/test`); say(p.id, true, t("providerWorks", { m: r.model })); }
+    catch (e) { say(p.id, false, String(e).replace(/^Error: /, "")); }
+    setBusy("");
+  };
+  const remove = async (p: ProviderInfo) => { await api.del(`/api/providers/${p.id}/key`); say(p.id, true, t("providerRemoved")); load(); };
+  return (
+    <>
+      <p className="muted" style={{ margin: 0 }}>{t("providersHint")}</p>
+      <div className="banner" style={{ borderRadius: 10 }}>{t("providersPrivacy")}</div>
+      {list.map((p) => (
+        <div key={p.id} className="card col" style={{ gap: 10 }}>
+          <div className="row wrap" style={{ justifyContent: "space-between" }}>
+            <strong>{p.name}</strong>
+            <span className={`pill ${p.has_key ? "ok" : ""}`}>{p.has_key ? t("keySaved") : t("noKey")}</span>
+          </div>
+          <div className="grid2">
+            <label className="col"><span className="small">{t("apiKey")}</span>
+              <input className="input" type="password" dir="ltr" autoComplete="off" placeholder={p.has_key ? "••••••••" : p.key_hint}
+                value={keys[p.id] ?? ""} onChange={(e) => setKeys({ ...keys, [p.id]: e.target.value })} /></label>
+            <label className="col"><span className="small">{t("modelName")}</span>
+              <input className="input" dir="ltr" placeholder={p.default_model} value={models[p.id] ?? ""}
+                onChange={(e) => setModels({ ...models, [p.id]: e.target.value })} /></label>
+          </div>
+          {p.caching && <span className="muted small">{t("cachingNote")}</span>}
+          <div className="row wrap">
+            <button className="btn primary" disabled={busy === p.id} onClick={() => save(p)}>{t("save")}</button>
+            <button className="btn" disabled={busy === p.id || !p.has_key} onClick={() => test(p)}>{t("testConnection")}</button>
+            {p.has_key && <button className="btn" onClick={() => remove(p)}>{t("removeKey")}</button>}
+            {msg[p.id] && <span className="small" style={{ color: msg[p.id].ok ? "var(--ok-text)" : "var(--danger-text)" }}>{msg[p.id].text}</span>}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
