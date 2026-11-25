@@ -1195,11 +1195,12 @@ dependencies = [
 
 [[package]]
 name = "greplens"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

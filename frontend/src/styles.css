@@ -1,10 +1,10 @@
 :root {
   --bg: #F3F5F7; --panel: #FFFFFF; --soft: #FAFBFC; --line: #DDE2E8; --line2: var(--hover);
   --text: #17202B; --muted: #556070; --text2: #384250;
-  --accent: #0B6576; --accent-dark: #084C59; --accent-soft: #E3F1F3; --accent-line: #B7DCE2;
+  --accent: #3E618E; --accent-dark: #2E4A6E; --accent-soft: #E6EDF6; --accent-line: #BCCDE3;
   --gk-bg: #F5F2FB; --gk-text: #2E2547; --gk-label: #5B3B9E;
   --soft2: #F6F8FA; --chip: #EAEEF2; --hover: #EEF1F4; --line-strong: #C3CAD3; --input-line: #C9D0D8; --bar-used: #8A94A3;
-  --accent-tint: #F2F9FA; --accent-logo: #0B6576; --gk-line: #CFC3EA;
+  --accent-tint: #F3F6FB; --accent-logo: #3E618E; --gk-line: #CFC3EA;
   --ok-bg: #E8F6EC; --ok-text: #1F6B3A; --ok-line: #BFDFC4; --ok-bar: #2E9D5B;
   --danger-bg: #FDECEA; --danger-text: #A1261B; --info-bg: #E6F0FD; --info-text: #1D4F91;
   --warn-bg: #FFF3DC; --warn-text: #7A4A00; --ai-bg: #EEE8FA; --ai-text: #5B3B9E;
@@ -15,9 +15,9 @@
 }
 /* dark theme: panels go dark; document pages stay white like paper */
 html[data-theme="dark"] {
-  --bg: #2B2E33; --panel: #33373D; --soft: #303439; --line: #4A4F56; --line2: #40454B;
-  --text: #ECEEF1; --muted: #B3B9C1; --text2: #D4D8DD;
-  --accent: #3A9BB0; --accent-dark: #8FDBE6; --accent-soft: #2C4A52; --accent-line: #3F6670; --accent-tint: #30424A; --accent-logo: #6CC8D6;
+  --bg: #2B2E33; --panel: #353940; --soft: #31353B; --line: #454A52; --line2: #3E4249;
+  --text: #E6E8EB; --muted: #AEB4BC; --text2: #D4D8DD;
+  --accent: #4D88E5; --accent-dark: #A9C6F5; --accent-soft: #2E3D55; --accent-line: #43618C; --accent-tint: #303A49; --accent-logo: #6FA0EC;
   --gk-bg: #393549; --gk-text: #E2DBF5; --gk-label: #C3B3F0; --gk-line: #575073;
   --soft2: #3A3E44; --chip: #43484F; --hover: #3E4349; --line-strong: #5A6068; --input-line: #5A6068; --bar-used: #7A828C;
   --ok-bg: #2E4A3A; --ok-text: #9BE0B5; --ok-line: #456B54; --ok-bar: #4CB878;
@@ -123,7 +123,7 @@ textarea.input { resize: vertical; }
 .mark.active { outline: 2px solid var(--accent); }
 .badge { color: #17202B; position: absolute; width: 22px; height: 22px; border-radius: 50%; font-size: 11.5px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; border: 1px solid rgba(0,0,0,.25); cursor: pointer; z-index: 3; }
-.flash { position: absolute; border: 2px solid var(--accent); background: rgba(11,101,118,.10); border-radius: 4px;
+.flash { position: absolute; border: 2px solid var(--accent); background: rgba(62,97,142,.12); border-radius: 4px;
   animation: flash 2.2s ease-out forwards; pointer-events: none; z-index: 4; }
 @keyframes flash { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 .search-hit { position: absolute; background: rgba(255, 170, 0, .35); pointer-events: none; }
