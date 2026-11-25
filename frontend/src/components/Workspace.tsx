@@ -8,6 +8,7 @@ import TextView from "./TextView";
 import NotesPanel from "./NotesPanel";
 import AssistantPanel from "./AssistantPanel";
 import AiPicker from "./AiPicker";
+import InstructionsDialog from "./InstructionsDialog";
 import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
 export type Selection = { page: number; rects: number[][]; quote: string; segment_id: string | null; start: number | null;
@@ -45,6 +46,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [sectionRequest, setSectionRequest] = useState<{ segment_ids: string[]; title: string; ts: number } | null>(null);
   const [mindMap, setMindMap] = useState<MindNode | null>(null);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
+  const [showInstructions, setShowInstructions] = useState(false);
   const handleSelect = useCallback((s: Selection | null) => { setSel(s); setMenu(null); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const revRef = useRef<HTMLInputElement>(null);
@@ -185,7 +187,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       <header className="topbar">
         <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
         <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
-        {ws && <AiPicker ws={ws} onChange={(w) => setWs({ ...ws, ...w })} />}
+        {ws && <AiPicker ws={ws} onChange={(w) => setWs({ ...ws, ...w, documents: ws.documents })} />}
+        <button className="btn" onClick={() => setShowInstructions(true)} title={t("instructionsHint")}>{t("instructionsBtn")}</button>
         <div style={{ position: "relative" }}>
           <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
             <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>
@@ -339,6 +342,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         </div>
       )}
 
+      {showInstructions && <InstructionsDialog workspaceId={id} onClose={() => setShowInstructions(false)} />}
       {mindMap && <MindMapView map={mindMap} onJump={jumpToSegment} onClose={() => setMindMap(null)} />}
       {quiz && <QuizView questions={quiz} onJump={jumpToSegment} onClose={() => setQuiz(null)} />}
       {tr && (

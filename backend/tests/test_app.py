@@ -440,3 +440,87 @@ def test_workspace_uses_cloud_provider(client, fake_cloud, tmp_path):
     # removing the key sends the workspace back to the local AI
     client.delete("/api/providers/claude/key")
     assert client.get(f"/api/workspaces/{ws['id']}").json()["provider"] == "local"
+
+
+# ------------------------------------------------------------------ instructions, checklists, comparison, formatting
+def test_instruction_files(client, workspace):
+    from greplens import instructions
+    r = client.post(f"/api/workspaces/{workspace['id']}/instructions",
+                    files={"file": ("house-rules.md", "# Values\nState each value once and cross-reference it.\n\n"
+                                    "# Guarantees\nGuarantees are unconditional and payable on first demand.".encode())}).json()
+    assert r["name"] == "house-rules"
+    listed = client.get(f"/api/workspaces/{workspace['id']}/instructions").json()
+    assert listed[0]["chars"] > 20
+    prompt = instructions.for_prompt(workspace["id"], "guarantee")
+    assert "WORKSPACE INSTRUCTIONS" in prompt and "first demand" in prompt
+    client.patch(f"/api/instructions/{r['id']}", json={"enabled": False})
+    assert instructions.for_prompt(workspace["id"], "guarantee") == ""
+    client.patch(f"/api/instructions/{r['id']}", json={"enabled": True})
+    # long files: the local AI gets only the most relevant parts
+    big = "\n\n".join(f"# Rule {i}\n" + ("filler words " * 60) for i in range(40)) + "\n\n# Retention\nRetention is released after twelve months."
+    client.post(f"/api/workspaces/{workspace['id']}/instructions", data={"name": "big", "text": big})
+    picked = instructions.for_prompt(workspace["id"], "When is retention released?")
+    assert "twelve months" in picked and len(picked) < instructions.LOCAL_BUDGET + 600
+
+
+def test_checklist_presets(client):
+    presets = client.get("/api/checklists").json()
+    contract = next(p for p in presets if p["id"] == "works-contract")
+    assert len(contract["items"]) >= 20
+    assert not any("HMG" in i for i in contract["items"])
+
+
+def test_checklist_one_item_at_a_time(client, pdf_doc):
+    r = client.post(f"/api/documents/{pdf_doc['id']}/reviews",
+                    json={"mode": "checklist_items", "checklist": ["Advance payment guarantee terms are stated",
+                                                                   "Zebra crossings are painted yellow"]}).json()
+    done = wait_review(client, r["id"])
+    assert done["status"] == "done" and done["total"] == 2
+    checklist = [f for f in done["findings"] if f["category"] == "Checklist"]
+    assert checklist and all(f["location"] for f in checklist)
+
+
+def test_compare_with_reference(client, workspace, tmp_path):
+    ref_path, draft_path = tmp_path / "ref.docx", tmp_path / "draft.docx"
+    make_docx(ref_path)
+    d = docx.Document()
+    for line in CONTRACT[:6]:  # Article 6 left out of the draft
+        d.add_paragraph(line.replace("10%", "15%"))
+    d.save(draft_path)
+    ids = []
+    for p in (ref_path, draft_path):
+        with open(p, "rb") as fh:
+            ids.append(wait_ready(client, client.post(f"/api/workspaces/{workspace['id']}/documents",
+                                                      files={"file": (p.name, fh)}).json()["id"])["id"])
+    bad = client.post(f"/api/documents/{ids[1]}/reviews", json={"mode": "compare", "compare_with": ids[1]})
+    assert bad.status_code == 400
+    r = client.post(f"/api/documents/{ids[1]}/reviews", json={"mode": "compare", "compare_with": ids[0]}).json()
+    done = wait_review(client, r["id"])
+    titles = [f["title"] for f in done["findings"] if f["category"] == "Comparison"]
+    assert any("Article 6" in t and "not in this document" in t for t in titles)
+    assert any(f["category"] == "Comparison" and f["segment_id"] for f in done["findings"])
+
+
+def test_word_formatting_checks(client, workspace, tmp_path):
+    from docx.shared import Inches
+    path = tmp_path / "formatting.docx"
+    d = docx.Document()
+    d.add_paragraph("Article 1 - Definitions")
+    for i in range(1, 5):
+        d.add_paragraph(f"1.{i} Typed clause number {i} for the definitions article.")
+    d.add_paragraph("")
+    d.add_paragraph("")
+    d.add_paragraph("Article 2 - Contract Value")
+    table = d.add_table(rows=1, cols=3)
+    table.rows[0].cells[0].text = "Total value"
+    for col in table._tbl.tblGrid.findall("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}gridCol"):
+        col.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}w", str(int(Inches(3).twips)))
+    d.save(path)
+    with open(path, "rb") as fh:
+        doc = wait_ready(client, client.post(f"/api/workspaces/{workspace['id']}/documents",
+                                             files={"file": ("formatting.docx", fh)}).json()["id"])
+    done = wait_review(client, client.post(f"/api/documents/{doc['id']}/reviews", json={"mode": "open"}).json()["id"])
+    titles = [f["title"] for f in done["findings"] if f["category"] == "Formatting"]
+    assert "Number typed as text" in titles
+    assert any("empty lines" in t for t in titles)
+    assert "Table extends past the right margin" in titles

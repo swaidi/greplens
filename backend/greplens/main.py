@@ -1,6 +1,7 @@
 """GrepLens local API (FastAPI). Serves the interface and listens on 127.0.0.1 only."""
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
 import shutil
@@ -16,13 +17,14 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, jobs, tools, export_docx, hardware, ingest, models, package, profiles, providers, qa, review, translate, updates
+from . import __version__, db, engine, instructions, jobs, tools, export_docx, hardware, ingest, models, package, profiles, providers, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
 async def lifespan(_app):
     db.init()
     jobs.init()
+    instructions.init()
     for doc in db.query("SELECT id FROM documents WHERE status NOT IN ('ready', 'error')"):
         ingest.enqueue(doc["id"])  # finish imports interrupted by closing the app
     review.resume_interrupted()
@@ -230,6 +232,7 @@ def delete_workspace(ws_id: str):
     for doc in db.query("SELECT id FROM documents WHERE workspace_id = ?", (ws_id,)):
         delete_document(doc["id"])
     db.execute("DELETE FROM notes WHERE workspace_id = ?", (ws_id,))
+    db.execute("DELETE FROM instructions WHERE workspace_id = ?", (ws_id,))
     db.execute("DELETE FROM workspaces WHERE id = ?", (ws_id,))
     return {"ok": True}
 
@@ -363,9 +366,11 @@ def clear_chat(doc_id: str):
 
 class ReviewBody(BaseModel):
     categories: list[str] = []
-    mode: str = "open"              # open | checklist | instruction
+    mode: str = "open"              # open | checklist | checklist_items | instruction | compare
     checklist: list[str] = []
     instruction: str = ""
+    compare_with: str = ""          # reference document (compare mode)
+    structure: bool = True          # Word formatting checks
 
 
 @app.post("/api/documents/{doc_id}/reviews")
@@ -373,6 +378,12 @@ def start_review(doc_id: str, body: ReviewBody):
     doc = _must("documents", doc_id)
     if doc["status"] != "ready":
         raise HTTPException(409, "The document is still being prepared.")
+    if body.mode == "compare":
+        ref = db.get("documents", body.compare_with) if body.compare_with else None
+        if not ref or ref["workspace_id"] != doc["workspace_id"] or ref["id"] == doc_id:
+            raise HTTPException(400, "Choose another document in this workspace as the reference.")
+        if ref["status"] != "ready":
+            raise HTTPException(409, "The reference document is still being prepared.")
     return review.start(doc_id, body.model_dump())
 
 
@@ -421,6 +432,43 @@ def add_term(body: dict):
 @app.delete("/api/glossary/{term_id}")
 def delete_term(term_id: str):
     db.execute("DELETE FROM glossary WHERE id = ?", (term_id,))
+    return {"ok": True}
+
+
+@app.get("/api/checklists")
+def get_checklists():
+    return json.loads((Path(profiles.__file__).with_name("checklists.json")).read_text(encoding="utf-8"))
+
+
+# ------------------------------------------------------------------ workspace instruction files
+@app.get("/api/workspaces/{ws_id}/instructions")
+def list_instructions(ws_id: str):
+    _must("workspaces", ws_id)
+    return instructions.list_for(ws_id)
+
+
+@app.post("/api/workspaces/{ws_id}/instructions")
+async def add_instructions(ws_id: str, file: UploadFile | None = File(None), name: str = Form(""), text: str = Form("")):
+    _must("workspaces", ws_id)
+    try:
+        if file is not None:
+            text = instructions.read_upload(file.filename, await file.read())
+            name = name or Path(file.filename).stem
+        return instructions.add(ws_id, name, text)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.patch("/api/instructions/{iid}")
+def update_instructions(iid: str, body: dict):
+    _must("instructions", iid)
+    db.update("instructions", iid, {k: (int(v) if k == "enabled" else v) for k, v in body.items() if k in ("name", "enabled", "text")})
+    return db.get("instructions", iid)
+
+
+@app.delete("/api/instructions/{iid}")
+def delete_instructions(iid: str):
+    db.execute("DELETE FROM instructions WHERE id = ?", (iid,))
     return {"ok": True}
 
 

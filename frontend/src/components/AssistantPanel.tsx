@@ -181,9 +181,18 @@ function AnswerCard({ a, onJump, onSave, onLink }: { a: Answer; onJump: Props["o
   );
 }
 
-function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
-  const { t } = useI18n();
-  const [mode, setMode] = useState<"open" | "checklist" | "instruction">("open");
+type Preset = { id: string; name: string; name_ar: string; categories: string[]; items: string[] };
+
+function ReviewTab({ doc, workspace, cats, setCats, onJump, reloadNotes }: TabProps) {
+  const { t, lang } = useI18n();
+  const [mode, setMode] = useState<"open" | "checklist" | "checklist_items" | "instruction" | "compare">("open");
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [compareWith, setCompareWith] = useState("");
+  const [structure, setStructure] = useState(true);
+  useEffect(() => { api.get<Preset[]>("/api/checklists").then(setPresets).catch(() => {}); }, []);
+  const others = (Array.isArray(workspace?.documents) ? workspace!.documents as Doc[] : [])
+    .filter((d) => d.id !== doc?.id && d.status === "ready");
+  const isChecklist = mode === "checklist" || mode === "checklist_items";
   const [checklist, setChecklist] = useState("");
   const [instruction, setInstruction] = useState("");
   const [review, setReview] = useState<Review | null>(null);
@@ -205,7 +214,8 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
     setError("");
     try {
       const r = await api.post<Review>(`/api/documents/${doc.id}/reviews`, {
-        categories: cats, mode, instruction, checklist: checklist.split("\n").map((x) => x.trim()).filter(Boolean) });
+        categories: cats, mode, instruction, checklist: checklist.split("\n").map((x) => x.trim()).filter(Boolean),
+        compare_with: compareWith, structure });
       setReview({ ...r, findings: [] });
     } catch (e) { setError(String(e)); }
   };
@@ -225,6 +235,8 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
   const running = review && ["running", "queued", "pausing"].includes(review.status);
   const modes: { id: typeof mode; label: Key; desc: Key }[] = [
     { id: "open", label: "openEnded", desc: "openDesc" }, { id: "checklist", label: "checklist", desc: "checklistDesc" },
+    { id: "checklist_items", label: "checklistItems", desc: "checklistItemsDesc" },
+    { id: "compare", label: "compareMode", desc: "compareDesc" },
     { id: "instruction", label: "instruction", desc: "instructionDesc" }];
 
   return (
@@ -241,8 +253,17 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
             <span className="radio" /><span className="col" style={{ gap: 2 }}><strong>{t(m.label)}</strong><span className="muted small">{t(m.desc)}</span></span>
           </button>
         ))}
-        {mode === "checklist" && (
+        {isChecklist && (
           <div className="col card" style={{ background: "var(--soft2)" }}>
+            {presets.length > 0 && (
+              <select className="input" aria-label={t("checklistPresets")} value="" onChange={(e) => {
+                const p = presets.find((x) => x.id === e.target.value);
+                if (p) { setChecklist(p.items.join("\n")); if (p.categories?.length) setCats(p.categories.slice(0, 2)); }
+              }}>
+                <option value="">{t("checklistPresets")}</option>
+                {presets.map((p) => <option key={p.id} value={p.id}>{lang === "ar" ? p.name_ar : p.name} ({p.items.length})</option>)}
+              </select>
+            )}
             <textarea className="input" rows={5} dir="auto" placeholder={t("checklistPlaceholder")} value={checklist}
               onChange={(e) => setChecklist(e.target.value)} />
             <input ref={fileRef} type="file" accept=".txt,.md,.csv" hidden onChange={async (e) => {
@@ -260,13 +281,28 @@ function ReviewTab({ doc, cats, setCats, onJump, reloadNotes }: TabProps) {
             </div>
           </div>
         )}
+        {mode === "compare" && (
+          <label className="col card" style={{ background: "var(--soft2)" }}><span className="muted small">{t("compareWith")}</span>
+            <select className="input" value={compareWith} onChange={(e) => setCompareWith(e.target.value)}>
+              <option value="">{others.length ? t("chooseReference") : t("noOtherDocs")}</option>
+              {others.map((d) => <option key={d.id} value={d.id}>{d.filename}</option>)}
+            </select>
+            <span className="muted small">{t("compareHint")}</span>
+          </label>
+        )}
+        {doc?.kind === "docx" && (
+          <button className="mode-card" style={{ justifyContent: "space-between" }} aria-pressed={structure} onClick={() => setStructure(!structure)}>
+            <span className="col" style={{ gap: 0 }}><strong>{t("wordChecks")}</strong><span className="muted small">{t("wordChecksHint")}</span></span>
+            <span className={`toggle ${structure ? "on" : ""}`} />
+          </button>
+        )}
         {mode === "instruction" && (
           <label className="col"><span className="muted small">{t("instructionLabel")}</span>
             <textarea className="input" rows={3} dir="auto" value={instruction} onChange={(e) => setInstruction(e.target.value)} /></label>
         )}
       </div>
       <div className="col">
-        <button className="btn big primary" disabled={!!running || (mode === "checklist" && !checklist.trim()) || (mode === "instruction" && !instruction.trim())}
+        <button className="btn big primary" disabled={!!running || (isChecklist && !checklist.trim()) || (mode === "instruction" && !instruction.trim()) || (mode === "compare" && !compareWith)}
           onClick={run}>{t("runReview")}</button>
         <span className="muted small" style={{ textAlign: "center" }}>{t("estimate")}</span>
       </div>

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from . import db, index, llm, profiles, providers
+from . import db, index, instructions, llm, profiles, providers
 
 SYSTEM = (
     "You are GrepLens, a careful document assistant. You receive numbered SOURCES taken from one document. "
@@ -50,7 +50,8 @@ def _answer(doc, document_id, question, mode, categories, history, asked) -> dic
     personas = " and ".join(p["persona"] for p in chosen)
     gk_rule = GK_DOC_ONLY if mode == "doc" else GK_CATEGORY.format(personas=personas)
     numbered = "\n\n".join(f"[{i}] ({s['location']})\n{s['text']}" for i, s in enumerate(sources, 1))
-    messages = [{"role": "system", "content": SYSTEM.format(gk_rule=gk_rule)}]
+    extra = instructions.for_prompt(doc["workspace_id"], question)
+    messages = [{"role": "system", "content": SYSTEM.format(gk_rule=gk_rule) + (f"\n\n{extra}" if extra else "")}]
     for turn in history:
         content = turn["content"]
         if turn["role"] == "assistant":

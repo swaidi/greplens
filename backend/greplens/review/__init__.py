@@ -10,6 +10,10 @@
 - cross_checks: rule-based checks across the whole document (placeholders left blank,
   cross-references to missing clauses, the same amount stated in several places).
 - finalize: marks the review complete.
+Modes: open (by category), checklist (all items per section), checklist_items (one check at a time
+across the whole document, using search), instruction, and compare (the document against a reference
+document in the same workspace, section by section). Word files also get formatting checks
+(structure.py). Workspace instruction files are added to the prompts (instructions.py).
 Pause/resume: the position is stored after each section; resuming restarts from that section.
 """
 from __future__ import annotations
@@ -24,7 +28,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .. import db, engine, llm, profiles, providers
+from .. import db, engine, index, instructions, llm, profiles, providers
 from ..ingest import segments_of
 
 SECTION_CHARS = 6000
@@ -38,7 +42,11 @@ class ReviewState(TypedDict, total=False):
     position: int
     instructions: str
     pending: list
+    candidates: list
     stop: bool
+    workspace_id: str
+    mode: str
+    config: dict
 
 
 def normalize(text: str) -> str:
@@ -112,18 +120,39 @@ def _save_finding(state: ReviewState, item: dict, seg: dict | None, location: st
 # ------------------------------------------------------------------ graph nodes
 def prepare(state: ReviewState) -> ReviewState:
     review = db.get("reviews", state["review_id"])
-    segments = segments_of(state["document_id"])
-    sections = build_sections(segments)
+    config = review["config"] or {}
+    mode = config.get("mode", "open")
+    if mode == "checklist_items":
+        items = [c.strip() for c in config.get("checklist", []) if c.strip()]
+        sections = [{"title": item, "item": item, "segment_ids": []} for item in items]
+        prompt = ITEM_PROMPT
+    elif mode == "compare":
+        sections = build_sections(segments_of(state["document_id"]))
+        prompt = COMPARE_PROMPT
+    else:
+        sections = build_sections(segments_of(state["document_id"]))
+        prompt = build_instructions(config)
     db.update("reviews", state["review_id"], {"status": "running", "total": len(sections), "updated": db.now()})
-    return {"sections": sections, "position": review.get("position", 0) or 0,
-            "instructions": build_instructions(review["config"]), "stop": False}
+    return {"sections": sections, "position": review.get("position", 0) or 0, "instructions": prompt, "stop": False,
+            "workspace_id": instructions.workspace_of_document(state["document_id"]) or "", "mode": mode,
+            "config": config}
+
+
+def _system(state: ReviewState, task_text: str) -> str:
+    extra = instructions.for_prompt(state.get("workspace_id"), task_text)
+    return state["instructions"] + (f"\n\n{extra}" if extra else "")
 
 
 def review_section(state: ReviewState) -> ReviewState:
+    mode = state.get("mode", "open")
+    if mode == "checklist_items":
+        return _check_item(state)
+    if mode == "compare":
+        return _compare_section(state)
     section = state["sections"][state["position"]]
     segs = [db.get("segments", sid) for sid in section["segment_ids"]]
     text = "\n\n".join(f"({s['location']})\n{s['text']}" for s in segs)
-    messages = [{"role": "system", "content": state["instructions"]},
+    messages = [{"role": "system", "content": _system(state, text[:2000])},
                 {"role": "user", "content": f"SECTION: {section['title']}\n\n{text}"}]
 
     def fake() -> str:
@@ -136,13 +165,130 @@ def review_section(state: ReviewState) -> ReviewState:
     raw = llm.chat("review", messages, json_mode=True, max_tokens=1200, fake=fake)
     data = llm.parse_json(raw, {"findings": []})
     items = data.get("findings", []) if isinstance(data, dict) else data if isinstance(data, list) else []
-    return {"pending": [i for i in items if isinstance(i, dict)]}
+    return {"pending": [i for i in items if isinstance(i, dict)], "candidates": section["segment_ids"]}
+
+
+# ------------------------------------------------------------------ one check at a time
+ITEM_PROMPT = (
+    "You check whether a document meets ONE requirement. You receive the REQUIREMENT and numbered PASSAGES found "
+    "by searching the document. Judge only from the passages.\n"
+    'Return only JSON: {"status": "met|not_met|partly|not_found", "findings": [{"severity": "high|medium|low", '
+    '"title": "short title", "quote": "exact words copied from a passage (at most 30 words)", '
+    '"recommendation": "what to change"}]}.\n'
+    "Give a finding for every place that fails or only partly meets the requirement. When it is met, return no "
+    "findings. When the passages do not deal with the requirement at all, use status not_found. Write in the "
+    "language of the passages.")
+
+
+def _check_item(state: ReviewState) -> ReviewState:
+    section = state["sections"][state["position"]]
+    item = section["item"]
+    sources = index.retrieve(state["workspace_id"], state["document_id"], item, k=6) if state.get("workspace_id") else []
+    seg_ids = list(dict.fromkeys(sid for s in sources for sid in s["segment_ids"] if sid))
+    numbered = "\n\n".join(f"[{i}] ({s['location']})\n{s['text']}" for i, s in enumerate(sources, 1))
+    messages = [{"role": "system", "content": _system(state, item)},
+                {"role": "user", "content": f"REQUIREMENT: {item}\n\nPASSAGES:\n{numbered or '(none found)'}"}]
+
+    def fake() -> str:
+        if not sources:
+            return json.dumps({"status": "not_found", "findings": []})
+        first = sources[0]["text"].split(".")[0][:120]
+        return json.dumps({"status": "partly", "findings": [{"severity": "medium", "title": "Check this wording",
+                                                            "quote": first, "recommendation": "Align it with the requirement."}]})
+
+    data = llm.parse_json(llm.chat("review", messages, json_mode=True, max_tokens=900, fake=fake), {})
+    data = data if isinstance(data, dict) else {}
+    status = str(data.get("status", "")).lower()
+    pending = [dict(f, category="Checklist") for f in data.get("findings") or [] if isinstance(f, dict)]
+    for f in pending:
+        f["title"] = f"{item[:120]} · {f.get('title', '')}".rstrip(" ·")
+    if status == "not_found" or (not sources and not pending):
+        pending = [{"severity": "medium", "category": "Checklist", "title": f"Not found: {item[:160]}", "quote": "",
+                    "recommendation": "The document does not appear to deal with this requirement. Check whether it is "
+                                      "missing or covered under another heading.", "_missing": True}]
+    return {"pending": pending, "candidates": seg_ids}
+
+
+# ------------------------------------------------------------------ compare with a reference document
+COMPARE_PROMPT = (
+    "You compare a DRAFT section with the matching REFERENCE text (an approved earlier version or a template). "
+    "Report each meaningful difference: changed values, periods or percentages; wording that weakens or removes "
+    "an obligation or protection; content in the reference that is missing from the draft; new obligations added "
+    "in the draft. Ignore layout, numbering style and trivial wording.\n"
+    'Return only JSON: {"findings": [{"severity": "high|medium|low", "type": "changed|missing|added", '
+    '"title": "short title", "quote": "exact words copied from the DRAFT (empty for missing)", '
+    '"reference_quote": "exact words from the REFERENCE (empty for added)", "recommendation": "keep, restore or decide"}]}. '
+    'Return {"findings": []} when they say the same thing. Write in the language of the draft.')
+_REF_CACHE: dict[str, list[dict]] = {}
+
+
+def _reference_text(state: ReviewState, segs: list[dict], title: str) -> tuple[str, list[dict]]:
+    ref_id = state["config"].get("compare_with", "")
+    if ref_id not in _REF_CACHE:
+        _REF_CACHE[ref_id] = segments_of(ref_id)
+    ref = _REF_CACHE[ref_id]
+    clauses = {s["clause"] for s in segs if s["clause"]}
+    matched = [r for r in ref if r["clause"] and r["clause"] in clauses]
+    article = segs[0]["article"] if segs else ""
+    if not matched and article:
+        matched = [r for r in ref if r["article"] == article]
+    if not matched and state.get("workspace_id"):
+        query = title + "\n" + " ".join(s["text"] for s in segs)[:600]
+        hits = index.retrieve(state["workspace_id"], ref_id, query, k=3)
+        wanted = {sid for h in hits for sid in h["segment_ids"]}
+        matched = [r for r in ref if r["id"] in wanted]
+    text, used = "", []
+    for r in matched:
+        if len(text) > SECTION_CHARS:
+            break
+        text += f"({r['location']})\n{r['text']}\n\n"
+        used.append(r)
+    return text.strip(), used
+
+
+def _compare_section(state: ReviewState) -> ReviewState:
+    section = state["sections"][state["position"]]
+    segs = [db.get("segments", sid) for sid in section["segment_ids"]]
+    draft = "\n\n".join(f"({s['location']})\n{s['text']}" for s in segs)
+    reference, used = _reference_text(state, segs, section["title"])
+    if not reference:
+        return {"pending": [{"severity": "low", "category": "Comparison", "title": f"{section['title']}: no matching text in the reference",
+                             "quote": segs[0]["text"][:120] if segs else "", "recommendation": "New content; check it is intended."}],
+                "candidates": section["segment_ids"]}
+    messages = [{"role": "system", "content": _system(state, draft[:2000])},
+                {"role": "user", "content": f"DRAFT ({section['title']}):\n{draft}\n\nREFERENCE:\n{reference}"}]
+
+    def fake() -> str:
+        return json.dumps({"findings": [{"severity": "medium", "type": "changed", "title": "Wording differs",
+                                         "quote": segs[0]["text"].split(".")[0][:100], "reference_quote": used[0]["text"][:100],
+                                         "recommendation": "Check the change."}]} if segs and used and
+                          normalize(segs[0]["text"]) != normalize(used[0]["text"]) else {"findings": []})
+
+    data = llm.parse_json(llm.chat("review", messages, json_mode=True, max_tokens=1200, fake=fake), {"findings": []})
+    items = data.get("findings", []) if isinstance(data, dict) else []
+    ref_loc = used[0]["location"] if used else ""
+    pending = []
+    for f in items:
+        if not isinstance(f, dict):
+            continue
+        ref_quote = str(f.get("reference_quote") or "").strip()
+        note = f"Reference ({ref_loc}): \u201c{ref_quote}\u201d. " if ref_quote else ""
+        f = dict(f, category="Comparison", recommendation=note + str(f.get("recommendation") or ""))
+        if not str(f.get("quote") or "").strip():
+            f["_section"] = True  # missing from the draft: attach to the section
+        pending.append(f)
+    return {"pending": pending, "candidates": section["segment_ids"]}
 
 
 def verify_section(state: ReviewState) -> ReviewState:
-    section = state["sections"][state["position"]]
-    segs = [db.get("segments", sid) for sid in section["segment_ids"]]
+    segs = [s for s in (db.get("segments", sid) for sid in state.get("candidates") or []) if s]
     for item in state.get("pending", []):
+        if item.get("_missing"):
+            _save_finding(state, item, None, "Not found in the document")
+            continue
+        if item.get("_section") and segs:
+            _save_finding(state, item, segs[0])
+            continue
         seg = locate(str(item.get("quote", "")), segs)
         if seg:  # drop any finding the model cannot tie to the real text
             _save_finding(state, item, seg)
@@ -150,7 +296,7 @@ def verify_section(state: ReviewState) -> ReviewState:
     current = db.get("reviews", state["review_id"])
     db.update("reviews", state["review_id"], {"position": position, "updated": db.now(),
                                               "message": f"Reviewed section {position} of {len(state['sections'])}"})
-    return {"position": position, "pending": [], "stop": current["status"] in ("pausing", "cancelled")}
+    return {"position": position, "pending": [], "candidates": [], "stop": current["status"] in ("pausing", "cancelled")}
 
 
 def route(state: ReviewState) -> str:
@@ -183,6 +329,9 @@ def cross_checks(state: ReviewState) -> ReviewState:
                                       "quote": m.group(0), "recommendation": "Check the cross-reference number."}, seg)
         for m in AMOUNT_RE.finditer(seg["text"]):
             amounts[re.sub(r"\D", "", m.group(0))].append(seg)
+    _formatting_checks(state, segments)
+    if state.get("mode") == "compare":
+        _missing_articles(state, segments)
     for _value, segs in amounts.items():
         places = {s["clause"] or s["location"] for s in segs}
         if len(places) > 1:
@@ -190,6 +339,38 @@ def cross_checks(state: ReviewState) -> ReviewState:
                                   "quote": AMOUNT_RE.search(segs[1]["text"]).group(0),
                                   "recommendation": "State the value once and cross-reference it elsewhere."}, segs[1])
     return {}
+
+
+def _formatting_checks(state: ReviewState, segments: list[dict]) -> None:
+    doc = db.get("documents", state["document_id"])
+    if not doc or doc["kind"] != "docx" or (state.get("config") or {}).get("structure") is False:
+        return
+    from .. import structure
+    from ..ingest import original_path
+    try:
+        found = structure.check(original_path(doc), segments)
+    except Exception:
+        traceback.print_exc()
+        return
+    for f in found:
+        seg = f.pop("seg")
+        _save_finding(state, {**f, "category": "Formatting"}, seg, None if seg else "Whole document")
+
+
+def _missing_articles(state: ReviewState, segments: list[dict]) -> None:
+    ref_id = (state.get("config") or {}).get("compare_with", "")
+    ref = _REF_CACHE.get(ref_id) or segments_of(ref_id)
+    draft_articles = {s["article"] for s in segments if s["article"]}
+    seen = set()
+    for r in ref:
+        if r["article"] and r["article"] not in draft_articles and r["article"] not in seen:
+            seen.add(r["article"])
+            _save_finding(state, {"severity": "high", "category": "Comparison",
+                                  "title": f"{r['article']} of the reference is not in this document",
+                                  "quote": "", "recommendation": f"Reference ({r['location']}): \u201c{r['text'][:200]}\u201d. "
+                                                                 "Restore it or record the decision to remove it."},
+                          None, "Missing (compared with the reference)")
+    _REF_CACHE.pop(ref_id, None)
 
 
 def finalize(state: ReviewState) -> ReviewState:

@@ -34,6 +34,7 @@ def main() -> None:
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--name", "greplens-backend",
         "--add-data", f"greplens/static{sep}greplens/static",
         "--add-data", f"greplens/profiles/builtin.json{sep}greplens/profiles",
+        "--add-data", f"greplens/profiles/checklists.json{sep}greplens/profiles",
         "--collect-all", "chromadb", "--collect-all", "llama_index.core", "--collect-all", "llama_index.vector_stores.chroma",
         "--collect-all", "langgraph", "--collect-submodules", "uvicorn", "--collect-data", "docx", "--add-data", f"{docx_parts}{sep}docx/parts", "--collect-data", "pptx",
         "--copy-metadata", "chromadb", "--copy-metadata", "llama-index-core", "--copy-metadata", "opentelemetry-sdk",
