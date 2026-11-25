@@ -524,3 +524,40 @@ def test_word_formatting_checks(client, workspace, tmp_path):
     assert "Number typed as text" in titles
     assert any("empty lines" in t for t in titles)
     assert "Table extends past the right margin" in titles
+
+
+# ------------------------------------------------------------------ Create panel
+def wait_job(client, job_id, timeout=120):
+    end = time.time() + timeout
+    while time.time() < end:
+        j = client.get(f"/api/jobs/{job_id}").json()
+        if j["status"] in ("done", "error", "cancelled"):
+            return j
+        time.sleep(0.3)
+    raise AssertionError("job did not finish")
+
+
+@pytest.mark.parametrize("kind", ["briefing", "study_guide", "flashcards", "comparison", "timeline", "mindmap",
+                                  "literature_review", "slides"])
+def test_create_outputs(client, workspace, pdf_doc, kind):
+    docs = [d["id"] for d in client.get(f"/api/workspaces/{workspace['id']}").json()["documents"] if d["status"] == "ready"]
+    assert len(docs) >= 2
+    params = {"document_ids": docs[:2], "criteria": ["Advance payment", "Time for completion"]} if kind == "comparison" \
+        else {"document_ids": docs[:2]}
+    job = client.post(f"/api/workspaces/{workspace['id']}/create", json={"kind": kind, "params": params}).json()
+    done = wait_job(client, job["id"])
+    assert done["status"] == "done", done["message"]
+    result = done["result"]
+    assert result["kind"] == kind and len(result["documents"]) == 2
+    flat = json.dumps(result)
+    if kind not in ("timeline",):
+        assert '"segment_id"' in flat  # every output links back to its source
+    word = client.get(f"/api/jobs/{job['id']}/file")
+    assert word.status_code == 200 and word.content[:2] == b"PK"
+    assert client.get(f"/api/workspaces/{workspace['id']}/create").json()[kind]["id"] == job["id"]
+
+
+def test_timeline_dates_sorted():
+    from greplens.create import date_key
+    dates = ["21st October 2026", "2026-01-05", "March 2025", "within 30 days", "05/02/2026"]
+    assert sorted(dates, key=date_key) == ["March 2025", "2026-01-05", "05/02/2026", "21st October 2026", "within 30 days"]

@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, instructions, jobs, tools, export_docx, hardware, ingest, models, package, profiles, providers, qa, review, translate, updates
+from . import __version__, create, db, engine, instructions, jobs, tools, export_docx, hardware, ingest, models, package, profiles, providers, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
@@ -531,6 +531,19 @@ def start_job(doc_id: str, body: JobBody):
         return jobs.start(doc_id, body.kind, body.params)
     except KeyError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/workspaces/{ws_id}/create")
+def start_create(ws_id: str, body: JobBody):
+    _must("workspaces", ws_id)
+    if body.kind not in create.KINDS:
+        raise HTTPException(400, f"Unknown output: {body.kind}")
+    return jobs.start(None, f"create_{body.kind}", body.params, workspace_id=ws_id)
+
+
+@app.get("/api/workspaces/{ws_id}/create")
+def workspace_creations(ws_id: str):
+    return {k.removeprefix("create_"): v for k, v in jobs.latest_for_workspace(ws_id).items()}
 
 
 @app.get("/api/documents/{doc_id}/jobs")
