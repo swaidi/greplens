@@ -25,5 +25,13 @@ for ($i = 0; $i -lt 36; $i++) {
 "Version before: $before  after: $after"
 "Running after the update:"; Get-Process | Where-Object { $_.Path -like "$dir\*" } | Select-Object ProcessName, Id | Format-Table | Out-String
 Get-ChildItem "$env:LOCALAPPDATA\GrepLens\logs" -ErrorAction SilentlyContinue | ForEach-Object { "--- $($_.Name)"; Get-Content $_.FullName -Tail 20 }
-if ($after -eq $before) { throw "The update did not install." }
+"Installer processes still running:"; Get-Process | Where-Object { $_.ProcessName -like "*setup*" } | Select-Object ProcessName, Id, Path | Format-Table | Out-String
+if ($after -eq $before) {
+  "Trying the installer directly in update mode:"
+  $p = Start-Process $new -ArgumentList "/UPDATE", "/P", "/R" -PassThru -Wait
+  "exit code $($p.ExitCode); version now $((Get-ItemProperty $key).DisplayVersion)"
+  $p = Start-Process $new -ArgumentList "/S" -PassThru -Wait
+  "silent: exit code $($p.ExitCode); version now $((Get-ItemProperty $key).DisplayVersion)"
+  throw "The update did not install."
+}
 "UPDATE CHECK PASSED"

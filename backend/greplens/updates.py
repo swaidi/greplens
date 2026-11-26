@@ -133,8 +133,10 @@ def _run_installer_after_exit(installer: Path) -> None:
         ]
     script += [
         "'GrepLens processes left: ' + @(& $procs).Count" if folder else "'no install folder'",
-        f"Start-Process -FilePath '{q(installer)}' -ArgumentList '/UPDATE','/P','/R'",
-        "'installer started'",
+        f"$p = Start-Process -FilePath '{q(installer)}' -ArgumentList '/UPDATE','/P','/R' -PassThru",
+        "'installer started: ' + $p.Id",
+        "$p.WaitForExit(600000) | Out-Null",
+        "'installer finished, exit code ' + $p.ExitCode",
         "Stop-Transcript | Out-Null",
     ]
     (log_folder / "update-helper.ps1").write_text("\n".join(script), encoding="utf-8")
