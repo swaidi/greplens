@@ -117,8 +117,10 @@ def _run_installer_after_exit(installer: Path) -> None:
     """
     folder = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
     q = lambda p: str(p).replace("'", "''")  # noqa: E731 - PowerShell single-quoted string
+    log_folder = data_dir() / "logs"
     script = [
-        "$ErrorActionPreference = 'SilentlyContinue'",
+        f"Start-Transcript -Path '{q(log_folder / 'update-helper.log')}' -Force | Out-Null",
+        "$ErrorActionPreference = 'Continue'",
         "Start-Sleep -Milliseconds 800",
     ]
     if folder:
@@ -129,14 +131,21 @@ def _run_installer_after_exit(installer: Path) -> None:
             "& $procs | Stop-Process -Force",
             "for ($i = 0; $i -lt 40 -and (& $procs); $i++) { Start-Sleep -Milliseconds 250; & $procs | Stop-Process -Force }",
         ]
-    script.append(f"Start-Process -FilePath '{q(installer)}' -ArgumentList '/UPDATE','/P','/R'")
-    log_folder = data_dir() / "logs"
+    script += [
+        "'GrepLens processes left: ' + @(& $procs).Count" if folder else "'no install folder'",
+        f"Start-Process -FilePath '{q(installer)}' -ArgumentList '/UPDATE','/P','/R'",
+        "'installer started'",
+        "Stop-Transcript | Out-Null",
+    ]
     (log_folder / "update-helper.ps1").write_text("\n".join(script), encoding="utf-8")
-    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    flags = 0x00000200 | 0x08000000  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW (its own hidden console)
     args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File",
             str(log_folder / "update-helper.ps1")]
+    out = open(log_folder / "update-helper.out", "w", encoding="utf-8")  # noqa: SIM115 - kept open for the child
+    kw = dict(stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, close_fds=True)
     try:  # also leave any job object GrepLens belongs to, so closing GrepLens cannot end the helper
-        subprocess.Popen(args, creationflags=flags | 0x01000000, close_fds=True)  # CREATE_BREAKAWAY_FROM_JOB
-    except OSError:
-        subprocess.Popen(args, creationflags=flags, close_fds=True)
+        subprocess.Popen(args, creationflags=flags | 0x01000000, **kw)  # CREATE_BREAKAWAY_FROM_JOB
+    except OSError as exc:
+        _log(f"install: helper without job breakaway ({exc})")
+        subprocess.Popen(args, creationflags=flags, **kw)
     _log(f"install: helper started for {installer} (folder {folder})")
