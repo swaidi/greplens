@@ -65,7 +65,7 @@ def get_settings():
 
 @app.patch("/api/settings")
 def patch_settings(body: dict):
-    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir", "theme", "view"}
+    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir", "theme", "view", "pen_mode"}
     return save_settings({k: v for k, v in body.items() if k in allowed})
 
 
@@ -260,6 +260,7 @@ class NoteBody(BaseModel):
     handwriting: list = []           # handwritten note: strokes on the note pad, x 0..1, y 0..pad height/width
     handwriting_text: str = ""       # the handwriting read as text by Windows (searchable, editable)
     handwriting_lang: str = ""       # en | ar: the language the handwriting is read in
+    sticky: dict | None = None       # sticky note on the page: {"x", "y" (page fractions), "open": bool}
     ink: list = []                   # freehand strokes: [{"color", "width", "points": [[x, y], ...]}] (page-relative 0..1)
 
 
@@ -299,7 +300,8 @@ def _read_handwriting(strokes: list, lang: str) -> tuple[str, str]:
 @app.patch("/api/notes/{note_id}")
 def update_note(note_id: str, body: dict):
     note = _must("notes", note_id)
-    allowed = {"body", "category", "status", "tags", "color", "mark", "ink", "handwriting", "handwriting_text", "handwriting_lang"}
+    allowed = {"body", "category", "status", "tags", "color", "mark", "ink", "handwriting", "handwriting_text", "handwriting_lang",
+               "sticky"}
     values = {k: v for k, v in body.items() if k in allowed}
     error = ""
     if "handwriting" in values and "handwriting_text" not in values:  # new or changed handwriting: read it again

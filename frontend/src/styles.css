@@ -318,3 +318,27 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
 .assist-pane.in-drawer { flex: 1; max-width: none; height: auto; min-height: 0; border: 0; }
 .compact .doc-toolbar { gap: 8px; }
 .compact .search-box { flex: 1 1 160px; }
+
+/* sticky notes on the PDF page */
+.sticky { position: absolute; z-index: 25; display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; border-radius: 6px;
+  background: #FFF4B8; color: #2B2A1F; border: 1px solid #E9D36A; box-shadow: 0 8px 22px rgba(16,24,40,.22); font: 14px/1.45 Inter, system-ui, sans-serif; }
+.sticky.active { box-shadow: 0 0 0 2px var(--accent), 0 10px 26px rgba(16,24,40,.26); }
+.sticky-head { display: flex; align-items: center; gap: 6px; margin: 0 -10px; padding: 6px 6px 6px 10px; cursor: grab; touch-action: none;
+  border-bottom: 1px solid #EAD777; background: #FCEB92; border-radius: 6px 6px 0 0; }
+.sticky-head:active { cursor: grabbing; }
+.sticky-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: #5A4F12; cursor: pointer; }
+.sticky-btn:hover { background: rgba(0,0,0,.07); }
+.sticky textarea { width: 100%; border: 0; background: transparent; resize: vertical; font: inherit; color: inherit; outline: none; min-height: 60px; }
+.sticky textarea::placeholder { color: #8C7F3A; }
+.sticky-quote { font-size: 12px; font-style: italic; color: #6B6234; }
+.sticky .hw-paper { background-color: #FFFBE0; }
+.sticky-icon { position: absolute; z-index: 24; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 5px;
+  border-radius: 5px; border: 1px solid #D9BE3A; background: #FFE873; color: #4A3F07; font: 600 11px Inter, sans-serif; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2); transform: translateY(-2px); }
+.sticky-icon.risk { background: #F9C9DD; border-color: #E08AB0; }
+.sticky-icon.query { background: #BFDDFB; border-color: #7FB2E8; }
+.sticky-icon:hover { filter: brightness(.96); }
+.place-layer { position: absolute; inset: 0; z-index: 30; cursor: crosshair; background: rgba(11,101,118,.06); }
+.pen-near .pdf-page { touch-action: none; }
+.hit-text .mark, .hit-text .badge, .hit-text .sticky, .hit-text .sticky-icon, .hit-text .ink-layer { pointer-events: none !important; }
+@media (pointer: coarse) { .sticky-icon { height: 30px; padding: 0 8px; font-size: 12px; } .sticky-btn { width: 40px; height: 40px; } }

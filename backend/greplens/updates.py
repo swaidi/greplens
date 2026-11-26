@@ -97,10 +97,46 @@ def _download_and_run(asset_url: str) -> None:
         engine.stop()  # release the engine files before the installer replaces them
         _log(f"install: starting {target}")
         if sys.platform == "win32":
-            os.startfile(str(target))  # noqa: S606 - installer the user chose to run
+            _run_installer_after_exit(target)
         else:
             subprocess.Popen(["xdg-open", str(target)])
         _install["status"] = "started"
     except Exception as exc:
         _log(f"install failed: {exc!r}")
         _install.update(status="error", message=f"The update could not be downloaded: {exc}")
+
+
+def _run_installer_after_exit(installer: Path) -> None:
+    """Close GrepLens completely, then run the installer as an update, and reopen GrepLens.
+
+    The installer must not be a child of GrepLens: closing GrepLens ends its whole process tree, which
+    would also end an installer started from it. A separate PowerShell helper, outside that tree, closes
+    every GrepLens process running from the install folder, waits until they are gone, then runs the
+    installer in update mode (/UPDATE: no "uninstall first" page, no running-app prompt; /P: progress
+    bar only; /R: open GrepLens again when done).
+    """
+    folder = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
+    q = lambda p: str(p).replace("'", "''")  # noqa: E731 - PowerShell single-quoted string
+    script = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "Start-Sleep -Milliseconds 800",
+    ]
+    if folder:
+        script += [
+            f"$dir = '{q(folder)}\\'",
+            "$procs = { Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($dir, 'OrdinalIgnoreCase') } }",
+            "& $procs | Where-Object { $_.ProcessName -notmatch 'greplens-backend|llama-server' } | Stop-Process -Force",
+            "& $procs | Stop-Process -Force",
+            "for ($i = 0; $i -lt 40 -and (& $procs); $i++) { Start-Sleep -Milliseconds 250; & $procs | Stop-Process -Force }",
+        ]
+    script.append(f"Start-Process -FilePath '{q(installer)}' -ArgumentList '/UPDATE','/P','/R'")
+    log_folder = data_dir() / "logs"
+    (log_folder / "update-helper.ps1").write_text("\n".join(script), encoding="utf-8")
+    flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File",
+            str(log_folder / "update-helper.ps1")]
+    try:  # also leave any job object GrepLens belongs to, so closing GrepLens cannot end the helper
+        subprocess.Popen(args, creationflags=flags | 0x01000000, close_fds=True)  # CREATE_BREAKAWAY_FROM_JOB
+    except OSError:
+        subprocess.Popen(args, creationflags=flags, close_fds=True)
+    _log(f"install: helper started for {installer} (folder {folder})")

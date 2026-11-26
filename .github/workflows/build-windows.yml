@@ -88,6 +88,13 @@ jobs:
         working-directory: src-tauri
         run: npx --yes @tauri-apps/cli@2 build
 
+      - name: Check in-app update
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/test-update.ps1
+
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:

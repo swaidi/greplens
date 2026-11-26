@@ -521,9 +521,12 @@ def annotated_pdf(document_id: str, include_findings: bool = True) -> tuple[byte
                 annot.set_info(content=content, title=n["author"] or "GrepLens")
                 annot.update()
             anchor_y = rects[0].y0 if rects else ((segs.get(n["segment_id"]) or {}).get("bbox") or [0, 0.08])[1] * h
-            if (n["body"] and not annot) or n.get("handwriting"):  # a note icon in the right margin
+            sticky = n.get("sticky") if isinstance(n.get("sticky"), dict) else None
+            if (n["body"] and not annot) or n.get("handwriting") or sticky:  # a sticky note where it was placed, or in the margin
                 hw_text = f"Handwriting reads: {n['handwriting_text']}" if n.get("handwriting_text") else ""
-                icon = page.add_text_annot(pymupdf.Point(w - 28, max(10, anchor_y)),
+                where = pymupdf.Point(min(w - 20, max(4, float(sticky.get("x", 0.9)) * w)), min(h - 20, max(4, float(sticky.get("y", 0.1)) * h))) \
+                    if sticky else pymupdf.Point(w - 28, max(10, anchor_y))
+                icon = page.add_text_annot(where,
                                            "\n".join(x for x in (content, hw_text) if x) or "Handwritten note", icon="Note")
                 icon.set_info(title=n["author"] or "GrepLens")
                 icon.update()

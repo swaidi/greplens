@@ -8,6 +8,7 @@ import { isScratch, strokesHit } from "../gestures";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const COLORS: Record<string, string> = { yellow: "#FFE58A", green: "#BDEBC8", blue: "#BFDDFB", pink: "#F9C9DD", orange: "#FFC999" };
+export type PenMode = "draw" | "highlight" | "select";
 export const colorOf = (c: string | null) => COLORS[c ?? "yellow"] ?? COLORS.yellow;
 
 type Props = {
@@ -16,7 +17,9 @@ type Props = {
   onContext: (s: Selection, x: number, y: number) => void;
   pen: { on: boolean; color: string; width: number; pending: Record<number, InkStroke[]>; add: (page: number, stroke: InkStroke) => void;
     /** remove ink a scratch-out or the pen's eraser touched: pending strokes by index, saved ink notes by stroke index */
-    erase: (page: number, pending: number[], saved: { note: Note; strokes: number[] }[]) => void };
+    erase: (page: number, pending: number[], saved: { note: Note; strokes: number[] }[]) => void;
+    /** what a pen does when it touches the page with the Pen tool off: draw ink, highlight text, or select text */
+    mode: PenMode; highlightColor: string; onHighlight: (s: Selection) => void };
   /** room kept beside each page for margin notes (pixels) */
   reserve?: number;
   renderMargin?: (page: number, height: number) => React.ReactNode;
@@ -88,6 +91,14 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
     return () => { document.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
   }, [onSelect]);
 
+  const [penNear, setPenNear] = useState(false);
+  const nearTimer = useRef(0);
+  const notePen = (e: React.PointerEvent) => {
+    if (e.pointerType !== "pen") return;
+    setPenNear(true);
+    window.clearTimeout(nearTimer.current);
+    nearTimer.current = window.setTimeout(() => setPenNear(false), 1500);
+  };
   const handlePointerUp = (e: React.PointerEvent) => {
     if (pen.on) return;
     const sel = readSelection();
@@ -101,8 +112,8 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
 
   if (error) return <div className="error-box">{error}</div>;
   return (
-    <div ref={boxRef} dir="ltr" className={`col ${pen.on ? "pen-on" : ""}`} style={{ gap: 16, width: "100%" }}
-      onPointerUp={handlePointerUp} onContextMenu={handleContext}>
+    <div ref={boxRef} dir="ltr" className={`col ${pen.on ? "pen-on" : ""} ${penNear ? "pen-near" : ""}`} style={{ gap: 16, width: "100%" }}
+      onPointerUp={handlePointerUp} onContextMenu={handleContext} onPointerMove={notePen} onPointerOver={notePen} onPointerDown={notePen}>
       {pdf && sizes.map((size, i) => {
         const scale = width / size.w;
         return (
@@ -120,6 +131,31 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
       })}
     </div>
   );
+}
+
+/** Highlight with the pen: the text from where the stroke starts to where it ends, like a text selection. */
+function selectAlong(points: number[][], page: HTMLElement): Selection | null {
+  page.classList.add("hit-text"); // let the caret search reach the text under existing marks
+  try {
+    const caretAt = (x: number, y: number) => {
+      const r = document.caretRangeFromPoint?.(x, y);
+      return r && page.querySelector(".textLayer")?.contains(r.startContainer) && r.startContainer.nodeType === Node.TEXT_NODE ? r : null;
+    };
+    let first: Range | null = null, last: Range | null = null;
+    for (const [x, y] of points) { first = caretAt(x, y); if (first) break; }
+    for (let i = points.length - 1; i >= 0; i--) { last = caretAt(points[i][0], points[i][1]); if (last) break; }
+    if (!first || !last) return null;
+    const range = document.createRange();
+    const forward = first.compareBoundaryPoints(Range.START_TO_START, last) <= 0;
+    const [a, b] = forward ? [first, last] : [last, first];
+    range.setStart(a.startContainer, a.startOffset);
+    range.setEnd(b.startContainer, Math.min((b.startContainer.textContent ?? "").length, b.startOffset + 1));
+    const sel = window.getSelection()!;
+    sel.removeAllRanges(); sel.addRange(range);
+    const result = readSelection();
+    sel.removeAllRanges();
+    return result;
+  } finally { page.classList.remove("hit-text"); }
 }
 
 function readSelection(): Selection | null {
@@ -152,6 +188,9 @@ export const strokePath = (pts: number[][], w: number, h: number) =>
 function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, activeNote, onNoteClick, flash, pen }: PageProps) {
   const [drawing, setDrawing] = useState<InkStroke | null>(null);
   const eraser = useRef<number[][] | null>(null);
+  // a pen touching the page with the Pen tool off: draws or highlights once it moves, a tap stays a tap
+  const penStroke = useRef<{ id: number; points: number[][]; client: number[][]; started: boolean } | null>(null);
+  const [auto, setAuto] = useState<InkStroke | null>(null);
   const isEraser = (e: React.PointerEvent) => e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) !== 0);
   // remove the ink a path touched; returns false when it touched nothing
   const eraseAlong = (path: number[][], radius: number) => {
@@ -206,13 +245,49 @@ function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, 
   return (
     <div ref={ref} className="pdf-page" data-page={number} style={style}
       onPointerDownCapture={(e) => { // the pen's eraser end removes ink, with or without the Pen tool
-        if (!isEraser(e)) return;
+        if (isEraser(e)) {
         e.preventDefault(); e.stopPropagation();
         try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
         eraser.current = [pagePoint(e, e.currentTarget)];
+        return;
+      }
+        if (e.pointerType !== "pen" || pen.on || pen.mode === "select" || e.button !== 0) return;
+        if ((e.target as HTMLElement).closest(".sticky, .sticky-icon, .page-pop, .badge, button, textarea, input")) return;
+        e.preventDefault(); // no text selection: the pen draws or highlights instead
+        penStroke.current = { id: e.pointerId, points: [pagePoint(e, e.currentTarget)], client: [[e.clientX, e.clientY]], started: false };
       }}
-      onPointerMoveCapture={(e) => { if (eraser.current) { e.stopPropagation(); eraser.current.push(pagePoint(e, e.currentTarget)); } }}
-      onPointerUpCapture={(e) => { if (eraser.current) { e.stopPropagation(); eraseAlong(eraser.current, 10); eraser.current = null; } }}>
+      onPointerMoveCapture={(e) => {
+        if (eraser.current) { e.stopPropagation(); eraser.current.push(pagePoint(e, e.currentTarget)); return; }
+        const st = penStroke.current;
+        if (!st || st.id !== e.pointerId) return;
+        st.points.push(pagePoint(e, e.currentTarget).map((v) => Math.round(v * 10000) / 10000));
+        st.client.push([e.clientX, e.clientY]);
+        if (!st.started && Math.hypot(e.clientX - st.client[0][0], e.clientY - st.client[0][1]) > 4) {
+          st.started = true;
+          try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+        }
+        if (st.started) {
+          e.stopPropagation();
+          setAuto(pen.mode === "highlight" ? { color: colorOf(pen.highlightColor), width: 14, points: [...st.points] }
+            : { color: pen.color, width: pen.width, points: [...st.points] });
+        }
+      }}
+      onPointerUpCapture={(e) => {
+        if (eraser.current) { e.stopPropagation(); eraseAlong(eraser.current, 10); eraser.current = null; return; }
+        const st = penStroke.current;
+        if (!st || st.id !== e.pointerId) return;
+        penStroke.current = null;
+        setAuto(null);
+        if (!st.started) return;
+        e.stopPropagation();
+        if (pen.mode === "highlight") {
+          const s = selectAlong(st.client, e.currentTarget);
+          if (s) pen.onHighlight(s);
+        } else if (!(isScratch(st.points, width, height) && eraseAlong(st.points, 6))) {
+          pen.add(number, { color: pen.color, width: pen.width, points: st.points });
+        }
+      }}
+      onPointerCancelCapture={() => { penStroke.current = null; eraser.current = null; setAuto(null); }}>
       <canvas ref={canvasRef} />
       <div ref={textRef} className="textLayer" />
       {notes.map((n) => n.rects.map((r, j) => (
@@ -233,7 +308,9 @@ function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, 
               fill="none" strokeLinecap="round" strokeLinejoin="round" />)}
           </g>
         ))}
-        {[...(pen.pending[number] ?? []), ...(drawing ? [drawing] : [])].map((st, j) => (
+        {auto && pen.mode === "highlight" && <path d={strokePath(auto.points, width, height)} stroke={auto.color} strokeWidth={auto.width}
+          opacity={0.45} fill="none" strokeLinecap="round" strokeLinejoin="round" />}
+        {[...(pen.pending[number] ?? []), ...(drawing ? [drawing] : []), ...(auto && pen.mode !== "highlight" ? [auto] : [])].map((st, j) => (
           <path key={`p${j}`} d={strokePath(st.points, width, height)} stroke={st.color} strokeWidth={st.width * scale} fill="none"
             strokeLinecap="round" strokeLinejoin="round" />
         ))}

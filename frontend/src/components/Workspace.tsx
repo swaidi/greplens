@@ -3,7 +3,8 @@ import { api, Doc, download, InkStroke, normalize, Note, Segment, Workspace } fr
 import { useI18n } from "../i18n";
 import { IconChevron, IconClose, IconDoc, IconDownload, IconGear, IconHighlight, IconPlus, IconSearch, IconShare, IconUnderline, Logo } from "../icons";
 import type { View } from "../App";
-import PdfView, { colorOf } from "./PdfView";
+import PdfView, { colorOf, PenMode } from "./PdfView";
+import { StickyNote, stickyAnchor } from "./Sticky";
 import TextView from "./TextView";
 import NotesPanel, { NoteCard, NoteChip } from "./NotesPanel";
 import { MarginRail } from "./Margin";
@@ -54,10 +55,18 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [view, setViewState] = useState<NotesView>("split");
   const [compact, setCompact] = useState(() => window.innerWidth < 1100);
   const [drawer, setDrawer] = useState<"notes" | "assist" | null>(null);
+  const [penMode, setPenModeState] = useState<PenMode>("draw");
+  const setPenMode = (m: PenMode) => { setPenModeState(m); api.patch("/api/settings", { pen_mode: m }).catch(() => {}); };
+  const [placing, setPlacing] = useState(false); // waiting for a tap on the page to drop a new sticky note
   const [dock, setDock] = useState(() => { try { return Number(localStorage.getItem("gl-dock")) || 0.42; } catch { return 0.42; } });
   const [, setTick] = useState(0);
   useEffect(() => history.subscribe(() => setTick((x) => x + 1)), []);
-  useEffect(() => { api.get<{ view?: NotesView }>("/api/settings").then((st) => st.view && setViewState(st.view)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get<{ view?: NotesView; pen_mode?: PenMode }>("/api/settings").then((st) => {
+      if (st.view) setViewState(st.view);
+      if (st.pen_mode) setPenModeState(st.pen_mode);
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
     const onResize = () => setCompact(window.innerWidth < 1100);
     window.addEventListener("resize", onResize);
@@ -121,7 +130,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     return onPage.find((x) => normalize(x.text).includes(q)) ?? onPage.find((x) => q.includes(normalize(x.text).slice(0, 40)));
   };
 
-  const createNote = async (mark: "highlight" | "underline" | "redact" | null, extra: Partial<Note> = {}) => {
+  const createNote = async (mark: "highlight" | "underline" | "redact" | null, extra: Partial<Note> = {}, from: Selection | null = sel) => {
+    const sel = from;
     if (!sel || !doc) return;
     const seg = segmentFor(sel);
     const note = await notesApi.create({
@@ -161,11 +171,11 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (saved.length) loadNotes();
   }, [setPending, loadNotes]);
   const undo = useCallback(async () => {
-    if (penOn && penPast.current.length) { undoStroke(); return; }
+    if (penPast.current.length) { undoStroke(); return; }
     if (await history.undo()) loadNotes();
   }, [penOn, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
   const redo = useCallback(async () => {
-    if (penOn && penFuture.current.length) { redoStroke(); return; }
+    if (penFuture.current.length) { redoStroke(); return; }
     if (await history.redo()) loadNotes();
   }, [penOn, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
   // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z); text boxes keep their own typing undo
@@ -184,9 +194,12 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const docPaneRef = useRef<HTMLElement | null>(null);
   const getDocPane = useCallback(() => docPaneRef.current, []);
   useTapGestures(getDocPane, undo, redo);
-  const finishPen = async () => {
+  // save the strokes drawn so far as ink notes (one per page)
+  const commitInk = async () => {
+    const all = pendingRef.current;
+    setPendingRaw({}); penPast.current = []; penFuture.current = [];
     if (doc) {
-      for (const [page, strokes] of Object.entries(pending)) {
+      for (const [page, strokes] of Object.entries(all)) {
         if (!strokes.length) continue;
         const ys = strokes.flatMap((st) => st.points.map((pt) => pt[1]));
         const near = segments.filter((x) => x.page === Number(page) && x.bbox?.length)
@@ -196,8 +209,14 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       }
       await loadNotes();
     }
-    setPendingRaw({}); penPast.current = []; penFuture.current = []; setPenOn(false);
   };
+  const finishPen = async () => { await commitInk(); setPenOn(false); };
+  // a pen used without the Pen tool: its ink is saved a moment after the last stroke
+  useEffect(() => {
+    if (penOn || !Object.values(pending).some((x) => x.length)) return;
+    const timer = setTimeout(commitInk, 1600);
+    return () => clearTimeout(timer);
+  }, [pending, penOn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const translate = async (s: Selection) => {
     const seg = segmentFor(s);
@@ -255,20 +274,45 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   // ---------- where notes are shown: split panels, margin beside the page, or on the page itself
   const anchorY = (n: Note) => n.rects?.length ? n.rects[0][1]
     : n.ink?.length ? Math.min(...n.ink.flatMap((st) => st.points.map((pt) => pt[1])))
+    : n.sticky ? n.sticky.y
     : (segments.find((x) => x.id === n.segment_id)?.bbox?.[1] ?? 0.03);
-  const bottomY = (n: Note) => n.rects?.length ? Math.max(...n.rects.map((r) => r[1] + r[3]))
-    : n.ink?.length ? Math.max(...n.ink.flatMap((st) => st.points.map((pt) => pt[1]))) : anchorY(n) + 0.02;
   const fullCard = (n: Note) => <NoteCard note={n} number={numbers[n.id]} active onActive={() => {}} reload={loadNotes} onClose={() => setActive(null)} />;
   const railItem = (n: Note) => active === n.id ? fullCard(n) : <NoteChip note={n} number={numbers[n.id]} onActive={() => setActive(n.id)} />;
   const pdfMargin = view === "margin" ? (page: number, h: number) => (
     <MarginRail height={h} items={noteList.filter((n) => n.page === page).map((n) => ({ id: n.id, y: anchorY(n) * h }))}
       render={(nid: string) => { const n = noteList.find((x) => x.id === nid); return n ? railItem(n) : null; }} />) : undefined;
-  const pdfOverlay = view === "page" ? (page: number, h: number, w: number) => {
-    const n = noteList.find((x) => x.id === active && x.page === page);
-    if (!n) return null;
-    const width = Math.min(460, w - 24);
-    return <div className="page-pop" style={{ top: bottomY(n) * h + 10, left: (w - width) / 2, width }}>{fullCard(n)}</div>;
-  } : undefined;
+  const pdfOverlay = view === "page" ? (page: number, h: number, w: number) => (
+    <>
+      {noteList.filter((n) => n.page === page).map((n) => (
+        <StickyNote key={n.id} note={n} number={numbers[n.id]} pageW={w} pageH={h} anchor={stickyAnchor(n, anchorY(n))}
+          active={active === n.id} reload={loadNotes} onOpen={() => setActive(n.id)} onClose={() => setActive(null)}
+          onMore={() => { setActive(n.id); setDrawer("notes"); }} />
+      ))}
+      {placing && (
+        <div className="place-layer" title={t("placeSticky")} onClick={async (e) => {
+          e.stopPropagation();
+          const r = e.currentTarget.getBoundingClientRect();
+          const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+          setPlacing(false);
+          if (!doc) return;
+          const near = segments.filter((sg) => sg.page === page && sg.bbox?.length)
+            .sort((a, b) => Math.abs(a.bbox[1] - y) - Math.abs(b.bbox[1] - y))[0];
+          const n = await notesApi.create({ document_id: doc.id, page, body: "", category: "info", segment_id: near?.id ?? null,
+            location: near?.location ?? `Page ${page}`, sticky: { x, y, open: true } });
+          await loadNotes(); setActive(n.id);
+        }} />
+      )}
+    </>
+  ) : undefined;
+  const setAllStickies = async (open: boolean) => {
+    for (const n of noteList) {
+      if (!n.page || !!n.sticky?.open === open) continue;
+      const a = stickyAnchor(n, anchorY(n));
+      await api.patch(`/api/notes/${n.id}`, { sticky: { x: n.sticky?.x ?? Math.min(a.x + 0.02, 0.7), y: n.sticky?.y ?? a.y + 0.02, open } });
+    }
+    if (!open) setActive(null);
+    loadNotes();
+  };
   const textMargin = view === "margin" ? (segId: string) => {
     const list = noteList.filter((n) => n.segment_id === segId);
     return <div className="margin-col">{list.map((n) => <div key={n.id}>{railItem(n)}</div>)}</div>;
@@ -345,6 +389,19 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
                 <option value="margin">{t("viewMargin")}</option>
                 <option value="page">{t("viewPage")}</option>
               </select>
+              {doc.kind === "pdf" && (
+                <select className="input view-pick" value={penMode} aria-label={t("penMode")} title={t("penModeHint")}
+                  onChange={(e) => setPenMode(e.target.value as PenMode)}>
+                  <option value="draw">{t("penDraws")}</option>
+                  <option value="highlight">{t("penHighlights")}</option>
+                  <option value="select">{t("penSelects")}</option>
+                </select>)}
+              {view === "page" && doc.kind === "pdf" && (
+                <>
+                  <button className={`btn ${placing ? "soft" : ""}`} onClick={() => setPlacing(!placing)} title={t("placeSticky")}>{t("addSticky")}</button>
+                  <button className="btn" onClick={() => setAllStickies(!noteList.some((n) => n.sticky?.open))}>
+                    {noteList.some((n) => n.sticky?.open) ? t("hideStickies") : t("showStickies")}</button>
+                </>)}
               {view !== "split" && <button className={`btn ${drawer === "notes" ? "soft" : ""}`} onClick={() => setDrawer(drawer === "notes" ? null : "notes")}>
                 {t("notes")} · {noteList.length}</button>}
               {compact && view !== "split" && <button className={`btn ${drawer === "assist" ? "soft" : ""}`} onClick={() => setDrawer(drawer === "assist" ? null : "assist")}>
@@ -389,7 +446,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
             <PdfView url={`/api/documents/${doc.id}/file`} notes={notes} numbers={numbers} activeNote={active} jump={jump}
               onSelect={handleSelect} onNoteClick={clickMark} onPage={onPage}
               onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }}
-              pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke, erase: eraseInk }}
+              pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke, erase: eraseInk, mode: penMode, highlightColor: color,
+                onHighlight: (s) => createNote("highlight", {}, s) }}
               reserve={view === "margin" ? 330 : 0} renderMargin={pdfMargin} renderOverlay={pdfOverlay} />
           )}
           {doc?.status === "ready" && doc.kind !== "pdf" && (

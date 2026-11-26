@@ -402,3 +402,19 @@ def test_undo_restore_note_and_view_setting(client, pdf_doc):
     back = client.post("/api/notes/restore", json=note | {"document_name": "ignored"}).json()
     assert back["id"] == note["id"] and back["body"] == "to undo" and back["tags"] == ["x"] and back["rects"] == note["rects"]
     assert client.patch("/api/settings", json={"view": "margin"}).json()["view"] == "margin"
+
+
+def test_sticky_note_and_pen_setting(client, pdf_doc):
+    note = client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "body": "Sticky here",
+                                           "sticky": {"x": 0.4, "y": 0.3, "open": True}}).json()
+    assert note["sticky"] == {"x": 0.4, "y": 0.3, "open": True}
+    moved = client.patch(f"/api/notes/{note['id']}", json={"sticky": {"x": 0.5, "y": 0.6, "open": False}}).json()
+    assert moved["sticky"]["open"] is False and moved["sticky"]["x"] == 0.5
+    plain = client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "body": "no sticky"}).json()
+    assert client.get(f"/api/documents/{pdf_doc['id']}/notes").json()[-1]["sticky"] is None or plain["sticky"] is None
+    import pymupdf
+    data = client.get(f"/api/documents/{pdf_doc['id']}/annotated.pdf").content
+    with pymupdf.open(stream=data, filetype="pdf") as pdf:
+        texts = [a.info.get("content", "") for a in pdf[0].annots()]
+    assert any("Sticky here" in t for t in texts)
+    assert client.patch("/api/settings", json={"pen_mode": "highlight"}).json()["pen_mode"] == "highlight"

@@ -50,6 +50,7 @@ DEFAULTS = {
     "setup_complete": False,
     "language": "en",
     "theme": "system",            # system | light | dark
+    "pen_mode": "draw",           # what a pen does on a PDF page: draw | highlight | select
     "view": "split",              # split | margin | page: where notes are shown beside the document
     "models_dir": "",
     "engine": "builtin",          # builtin (bundled llama.cpp) | ollama
