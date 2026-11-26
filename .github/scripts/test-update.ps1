@@ -28,10 +28,9 @@ Get-ChildItem "$env:LOCALAPPDATA\GrepLens\logs" -ErrorAction SilentlyContinue | 
 "Installer processes still running:"; Get-Process | Where-Object { $_.ProcessName -like "*setup*" } | Select-Object ProcessName, Id, Path | Format-Table | Out-String
 if ($after -eq $before) {
   "Trying the installer directly in update mode:"
-  $p = Start-Process $new -ArgumentList "/UPDATE", "/P", "/R" -PassThru -Wait
-  "exit code $($p.ExitCode); version now $((Get-ItemProperty $key).DisplayVersion)"
-  $p = Start-Process $new -ArgumentList "/S" -PassThru -Wait
-  "silent: exit code $($p.ExitCode); version now $((Get-ItemProperty $key).DisplayVersion)"
+  $p = Start-Process $new -ArgumentList "/UPDATE", "/P", "/R" -PassThru
+  if (-not $p.WaitForExit(180000)) { "installer still waiting after 3 minutes (a dialog?)"; $p.Kill() }
+  else { "exit code $($p.ExitCode); version now $((Get-ItemProperty $key).DisplayVersion)" }
   throw "The update did not install."
 }
 "UPDATE CHECK PASSED"

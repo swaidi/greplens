@@ -52,7 +52,7 @@
           "English",
           "Arabic"
         ],
-        "displayLanguageSelector": true,
+        "displayLanguageSelector": false,
         "installerHooks": "./windows/hooks.nsh"
       }
     }

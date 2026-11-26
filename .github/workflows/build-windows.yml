@@ -90,6 +90,7 @@ jobs:
 
       - name: Check in-app update
         continue-on-error: true
+        timeout-minutes: 12
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
