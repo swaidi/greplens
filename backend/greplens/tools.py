@@ -522,7 +522,9 @@ def annotated_pdf(document_id: str, include_findings: bool = True) -> tuple[byte
                 annot.update()
             anchor_y = rects[0].y0 if rects else ((segs.get(n["segment_id"]) or {}).get("bbox") or [0, 0.08])[1] * h
             if (n["body"] and not annot) or n.get("handwriting"):  # a note icon in the right margin
-                icon = page.add_text_annot(pymupdf.Point(w - 28, max(10, anchor_y)), content or "Handwritten note", icon="Note")
+                hw_text = f"Handwriting reads: {n['handwriting_text']}" if n.get("handwriting_text") else ""
+                icon = page.add_text_annot(pymupdf.Point(w - 28, max(10, anchor_y)),
+                                           "\n".join(x for x in (content, hw_text) if x) or "Handwritten note", icon="Note")
                 icon.set_info(title=n["author"] or "GrepLens")
                 icon.update()
             if n.get("handwriting"):  # handwriting drawn small in the right margin, as ink
@@ -531,7 +533,7 @@ def annotated_pdf(document_id: str, include_findings: bool = True) -> tuple[byte
                 ink = page.add_ink_annot([[(x0 + p[0] * box_w, y0 + p[1] * box_w) for p in s["points"]] for s in strokes])
                 ink.set_colors(stroke=_rgb(strokes[0].get("color")))
                 ink.set_border(width=1.2)
-                ink.set_info(content="Handwritten note", title=n["author"] or "GrepLens")
+                ink.set_info(content=n.get("handwriting_text") or "Handwritten note", title=n["author"] or "GrepLens")
                 ink.update()
         if include_findings:
             review = db.query("SELECT id FROM reviews WHERE document_id = ? ORDER BY created DESC LIMIT 1", (document_id,))

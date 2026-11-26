@@ -42,7 +42,7 @@ def main() -> None:
         "--exclude-module", "torch", "--exclude-module", "tensorflow", "--exclude-module", "matplotlib",
     ]
     if sys.platform == "win32":
-        args.append("--noconsole")
+        args += ["--noconsole", "--collect-all", "winrt"]  # Windows handwriting recognizer bindings
     args.append("run_backend.py")
     subprocess.check_call(args, cwd=HERE)
     OUT.mkdir(parents=True, exist_ok=True)

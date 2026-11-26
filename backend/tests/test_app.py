@@ -365,3 +365,31 @@ def test_notes_saved_into_pdf(client, pdf_doc):
     with pymupdf.open("pdf", data) as out:
         kinds = {a.type[1] for p in out for a in p.annots()}
     assert {"Highlight", "Underline", "Ink", "Text"} <= kinds
+
+
+def test_handwriting_read_and_note_search(client, workspace, pdf_doc):
+    assert client.get("/api/handwriting/status").json()["available"] is True
+    hw = [{"color": "#17202B", "width": 2.5, "points": [[0.1, 0.05], [0.3, 0.08], [0.5, 0.06]]}]
+    note = client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "body": "", "handwriting": hw}).json()
+    assert note["handwriting_text"] == "handwritten note" and note["handwriting_lang"] == "en"
+    # read again in Arabic, then correct the text by hand
+    note = client.post(f"/api/notes/{note['id']}/read-handwriting", json={"lang": "ar"}).json()
+    assert note["handwriting_text"] == "ملاحظة بخط اليد" and note["handwriting_lang"] == "ar"
+    note = client.patch(f"/api/notes/{note['id']}", json={"handwriting_text": "check guarantee expiry"}).json()
+    assert note["handwriting_text"] == "check guarantee expiry"
+    # changed handwriting is read again, in the note's language
+    note = client.patch(f"/api/notes/{note['id']}", json={"handwriting": hw + hw}).json()
+    assert note["handwriting_text"] == "ملاحظة بخط اليد"
+    client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "body": "Confirm the bank guarantee",
+                                    "tags": ["finance"]})
+    url = f"/api/workspaces/{workspace['id']}/notes/search"
+    assert any(n["id"] == note["id"] for n in client.get(url, params={"q": "ملاحظه"}).json())  # Arabic letter forms ignored
+    found = client.get(url, params={"q": "bank guarantee", "document_id": pdf_doc["id"]}).json()
+    assert found and found[0]["document_name"] == "contract.pdf"
+    assert client.get(url, params={"q": "finance"}).json()
+    assert client.get(url, params={"q": "nothing like this"}).json() == []
+    # Word export carries the text the handwriting reads as
+    import io
+    import zipfile
+    data = client.get(f"/api/documents/{pdf_doc['id']}/export.docx").content
+    assert "Handwriting reads: ملاحظة بخط اليد" in zipfile.ZipFile(io.BytesIO(data)).read("word/comments.xml").decode()

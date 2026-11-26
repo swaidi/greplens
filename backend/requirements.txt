@@ -12,3 +12,8 @@ chromadb>=1.0
 llama-index-core>=0.12
 llama-index-vector-stores-chroma>=0.4
 langgraph>=0.4
+winrt-runtime>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation.Numerics>=3.0; sys_platform == "win32"
+winrt-Windows.UI.Input.Inking>=3.0; sys_platform == "win32"

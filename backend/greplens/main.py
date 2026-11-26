@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, jobs, tools, export_docx, hardware, ingest, models, package, profiles, qa, review, translate, updates
+from . import __version__, db, engine, jobs, tools, export_docx, handwriting, hardware, ingest, models, package, profiles, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
@@ -258,6 +258,8 @@ class NoteBody(BaseModel):
     ai_answer: bool = False
     location: str | None = None
     handwriting: list = []           # handwritten note: strokes on the note pad, x 0..1, y 0..pad height/width
+    handwriting_text: str = ""       # the handwriting read as text by Windows (searchable, editable)
+    handwriting_lang: str = ""       # en | ar: the language the handwriting is read in
     ink: list = []                   # freehand strokes: [{"color", "width", "points": [[x, y], ...]}] (page-relative 0..1)
 
 
@@ -275,15 +277,75 @@ def create_note(body: NoteBody):
         values["location"] = seg["location"] if seg else ""
     values.update(workspace_id=doc["workspace_id"], author=load_settings().get("author", "You"),
                   ai_answer=int(body.ai_answer), created=db.now(), updated=db.now())
-    return db.insert("notes", values)
+    error = ""
+    if values.get("handwriting") and not values.get("handwriting_text"):
+        values["handwriting_lang"] = values.get("handwriting_lang") or _hw_lang()
+        values["handwriting_text"], error = _read_handwriting(values["handwriting"], values["handwriting_lang"])
+    return db.insert("notes", values) | ({"handwriting_error": error} if error else {})
+
+
+def _hw_lang() -> str:
+    return "ar" if load_settings().get("language") == "ar" else "en"
+
+
+def _read_handwriting(strokes: list, lang: str) -> tuple[str, str]:
+    """Read handwriting as text; a failure never blocks saving the note."""
+    try:
+        return handwriting.recognize(strokes, lang), ""
+    except Exception as exc:  # noqa: BLE001
+        return "", str(exc) or exc.__class__.__name__
 
 
 @app.patch("/api/notes/{note_id}")
 def update_note(note_id: str, body: dict):
-    _must("notes", note_id)
-    allowed = {"body", "category", "status", "tags", "color", "mark", "ink", "handwriting"}
-    db.update("notes", note_id, {k: v for k, v in body.items() if k in allowed} | {"updated": db.now()})
+    note = _must("notes", note_id)
+    allowed = {"body", "category", "status", "tags", "color", "mark", "ink", "handwriting", "handwriting_text", "handwriting_lang"}
+    values = {k: v for k, v in body.items() if k in allowed}
+    error = ""
+    if "handwriting" in values and "handwriting_text" not in values:  # new or changed handwriting: read it again
+        lang = values.get("handwriting_lang") or note.get("handwriting_lang") or _hw_lang()
+        values["handwriting_lang"] = lang
+        values["handwriting_text"], error = _read_handwriting(values["handwriting"], lang)
+    db.update("notes", note_id, values | {"updated": db.now()})
+    return db.get("notes", note_id) | ({"handwriting_error": error} if error else {})
+
+
+@app.post("/api/notes/{note_id}/read-handwriting")
+def read_handwriting(note_id: str, body: dict):
+    """Read a note's handwriting again, for example in the other language."""
+    note = _must("notes", note_id)
+    lang = str(body.get("lang") or note.get("handwriting_lang") or _hw_lang())
+    text, error = _read_handwriting(note.get("handwriting") or [], lang)
+    if error:
+        raise HTTPException(422, error)
+    db.update("notes", note_id, {"handwriting_text": text, "handwriting_lang": lang, "updated": db.now()})
     return db.get("notes", note_id)
+
+
+@app.get("/api/handwriting/status")
+def handwriting_status():
+    return handwriting.status()
+
+
+@app.get("/api/workspaces/{ws_id}/notes/search")
+def search_notes(ws_id: str, q: str, document_id: str | None = None):
+    """Find notes by their text, quote, tags, location or handwriting read as text (Arabic letter forms ignored)."""
+    words = review.normalize(q).split()
+    if not words:
+        return []
+    sql = ("SELECT n.*, d.filename AS document_name FROM notes n JOIN documents d ON d.id = n.document_id "
+           "WHERE n.workspace_id = ? AND (n.mark IS NULL OR n.mark != 'redact')")
+    args: list = [ws_id]
+    if document_id:
+        sql += " AND n.document_id = ?"
+        args.append(document_id)
+    found = []
+    for n in db.query(sql + " ORDER BY d.created, n.page, n.created", tuple(args)):
+        hay = review.normalize(" ".join(str(x or "") for x in (n["body"], n["quote"], n["handwriting_text"], n["location"],
+                                                                 n["category"], " ".join(n["tags"] or []))))
+        if all(w in hay for w in words):
+            found.append(n)
+    return found[:200]
 
 
 @app.delete("/api/notes/{note_id}")

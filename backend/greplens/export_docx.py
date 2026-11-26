@@ -33,7 +33,8 @@ def _items(document_id: str) -> list[dict]:
             body += " (saved AI answer)"
         items.append({"quote": n["quote"] or "", "text": body, "author": n["author"] or "GrepLens",
                       "segment_id": n["segment_id"], "mark": n["mark"], "color": n["color"],
-                      "handwriting": n.get("handwriting") or [], "page": n["page"]})
+                      "handwriting": n.get("handwriting") or [], "handwriting_text": n.get("handwriting_text") or "",
+                      "page": n["page"]})
     review = db.query("SELECT id FROM reviews WHERE document_id = ? ORDER BY created DESC LIMIT 1", (document_id,))
     if review:
         for f in db.query("SELECT * FROM findings WHERE review_id = ?", (review[0]["id"],)):
@@ -189,6 +190,8 @@ def _comment(document, runs, text: str, item: dict) -> None:
     if item.get("handwriting"):
         from docx.shared import Inches
         comment.add_paragraph().add_run().add_picture(io.BytesIO(handwriting_png(item["handwriting"])), width=Inches(2.6))
+        if item.get("handwriting_text"):
+            comment.add_paragraph(f"Handwriting reads: {item['handwriting_text']}")
 
 
 def handwriting_png(strokes: list[dict], pad_width: float = 600) -> bytes:

@@ -44,6 +44,11 @@ jobs:
           python -m pytest -q tests
           python build_backend.py
 
+      - name: Check handwriting recognizer
+        working-directory: backend
+        continue-on-error: true
+        run: python tests/hw_check.py
+
       - name: Bundle llama.cpp engine (CPU build)
         shell: pwsh
         env:
