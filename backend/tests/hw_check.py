@@ -22,10 +22,14 @@ except Exception as exc:  # noqa: BLE001
     print("source read failed:", repr(exc))
 
 exe = next((HERE.parent / "src-tauri" / "binaries").glob("greplens-backend-*.exe"))
-env = {**os.environ, "GREPLENS_DATA": tempfile.mkdtemp(), "GREPLENS_PORT": "8799"}
+data = tempfile.mkdtemp()
+env = {**os.environ, "GREPLENS_DATA": data, "GREPLENS_PORT": "8799"}
 proc = subprocess.Popen([str(exe)], env=env)
 try:
-    for _ in range(120):
+    for _ in range(300):
+        if proc.poll() is not None:
+            print("frozen back end exited with code", proc.returncode)
+            break
         try:
             with urllib.request.urlopen("http://127.0.0.1:8799/api/handwriting/status", timeout=2) as r:
                 print("frozen status:", r.read().decode())
@@ -35,4 +39,7 @@ try:
     else:
         print("frozen back end did not start")
 finally:
+    for log in Path(data, "logs").glob("*.log"):
+        print(f"--- {log.name} ---")
+        print(log.read_text(encoding="utf-8", errors="replace")[-4000:])
     subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)

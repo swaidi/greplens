@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { InkStroke } from "../api";
 import { useI18n } from "../i18n";
 
-/** Handwritten notes: strokes stored with x from 0 to 1 and y in the same units (no text recognition). */
+/** Handwritten notes: strokes stored with x from 0 to 1 and y in the same units; Windows reads them as text for search. */
 const PEN_COLORS = ["#17202B", "#1D4F91", "#D92D20"];
 const path = (pts: number[][], k: number) => pts.map((p, i) => `${i ? "L" : "M"}${(p[0] * k).toFixed(1)} ${(p[1] * k).toFixed(1)}`).join(" ");
 
@@ -17,8 +17,10 @@ export function HandwritingView({ strokes }: { strokes: InkStroke[] }) {
   );
 }
 
-export function HandwritingPad({ initial, onSave, onCancel }: { initial: InkStroke[]; onSave: (s: InkStroke[]) => void; onCancel: () => void }) {
-  const { t } = useI18n();
+export function HandwritingPad({ initial, initialLang, onSave, onCancel }: { initial: InkStroke[]; initialLang?: string;
+  onSave: (s: InkStroke[], lang: string) => void; onCancel: () => void }) {
+  const { t, lang: uiLang } = useI18n();
+  const [lang, setLang] = useState(initialLang || uiLang);
   const [strokes, setStrokes] = useState<InkStroke[]>(initial);
   const [current, setCurrent] = useState<InkStroke | null>(null);
   const [color, setColor] = useState(PEN_COLORS[0]);
@@ -59,8 +61,12 @@ export function HandwritingPad({ initial, onSave, onCancel }: { initial: InkStro
         <button className="btn small" disabled={!strokes.length} onClick={() => setStrokes((s) => s.slice(0, -1))}>{t("penUndo")}</button>
         <button className="btn small" disabled={!strokes.length} onClick={() => setStrokes([])}>{t("hwClear")}</button>
         <span className="grow" />
+        <div className="seg" role="group" aria-label={t("hwLang")} title={t("hwLang")}>
+          <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+          <button className={lang === "ar" ? "on" : ""} onClick={() => setLang("ar")}>عربي</button>
+        </div>
         <button className="btn small" onClick={onCancel}>{t("cancel")}</button>
-        <button className="btn small primary" onClick={() => onSave(strokes)}>{t("hwSave")}</button>
+        <button className="btn small primary" onClick={() => onSave(strokes, lang)}>{t("hwSave")}</button>
       </div>
       <span className="muted small">{t("hwHint")}</span>
     </div>

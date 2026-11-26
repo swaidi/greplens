@@ -103,6 +103,11 @@ const en = {
   pdfNotesNote: "Opens in any PDF reader, such as Acrobat or Edge, with notes shown as comments.",
   pdfNotesOther: "For Word and other documents, use Export Word, which keeps notes as Word comments.",
   outline: "Outline", noOutline: "No headings were found in this document.", summarizeSection: "Summarize this section", summarizeShort: "Summary",
+  searchNotes: "Search notes", scopeDoc: "This document", scopeWs: "Whole workspace", noMatches: "No notes match.",
+  readsAs: "Reads as", readsAsHint: "The text Windows read from your handwriting. Correct it here if needed; search uses it.",
+  readAgain: "Read again", readInArabic: "Read as Arabic", readInEnglish: "Read as English", hwLang: "Handwriting language",
+  hwReading: "Reading…", hwReadFailed: "Windows could not read this handwriting.",
+  hwUnavailable: "Windows cannot read handwriting on this computer yet. Add it in Settings > Time & language > Language & region > (language) > Language options > Handwriting.",
 };
 export type Key = keyof typeof en;
 
@@ -209,6 +214,11 @@ const ar: Record<Key, string> = {
   pdfNotesNote: "تفتح في أي قارئ PDF مثل Acrobat أو Edge، وتظهر الملاحظات كتعليقات.",
   pdfNotesOther: "لمستندات Word وغيرها، استخدم تصدير Word الذي يحفظ الملاحظات كتعليقات Word.",
   outline: "الفهرس", noOutline: "لم يتم العثور على عناوين في هذا المستند.", summarizeSection: "لخّص هذا القسم", summarizeShort: "ملخص",
+  searchNotes: "ابحث في الملاحظات", scopeDoc: "هذا المستند", scopeWs: "مساحة العمل كاملة", noMatches: "لا توجد ملاحظات مطابقة.",
+  readsAs: "تُقرأ", readsAsHint: "النص الذي قرأه Windows من خط يدك. صححه هنا عند الحاجة؛ البحث يعتمد عليه.",
+  readAgain: "اقرأ مجددًا", readInArabic: "اقرأ بالعربية", readInEnglish: "اقرأ بالإنجليزية", hwLang: "لغة خط اليد",
+  hwReading: "جارٍ القراءة…", hwReadFailed: "تعذر على Windows قراءة خط اليد هذا.",
+  hwUnavailable: "لا يستطيع Windows قراءة خط اليد على هذا الجهاز بعد. أضفه من الإعدادات > الوقت واللغة > اللغة والمنطقة > (اللغة) > خيارات اللغة > الكتابة اليدوية.",
 };
 
 export const dictionaries = { en, ar };

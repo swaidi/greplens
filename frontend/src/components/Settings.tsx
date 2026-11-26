@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Profile } from "../api";
+import { api, appVersion, Profile } from "../api";
 import { Key, useI18n } from "../i18n";
 import { IconBack, IconTrash } from "../icons";
 import type { View } from "../App";
@@ -31,6 +31,8 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
   const [checking, setChecking] = useState(false);
   const [scanFolder, setScanFolder] = useState("");
   const [scanMsg, setScanMsg] = useState("");
+  const [version, setVersion] = useState("");
+  useEffect(() => { appVersion().then(setVersion); }, []);
 
   const load = () => {
     api.get<Settings>("/api/settings").then(setSettings);
@@ -201,7 +203,7 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                 <span className="muted">{updateMsg}</span>
               </div>
               {update && <UpdateOffer update={update} inline onDismiss={() => setUpdate(null)} />}
-              <span className="muted small">{t("version")}: {update?.current ?? "—"}</span>
+              <span className="muted small">{t("version")}: {version || update?.current || "—"}</span>
             </>
           )}
 
@@ -209,7 +211,7 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
             <>
               <label className="col" style={{ maxWidth: 360 }}><span>{t("yourName")}</span>
                 <input className="input" defaultValue={settings.author} onBlur={(e) => patch({ author: e.target.value.trim() || "You" })} /></label>
-              <div className="muted">GrepLens · AGPL-3.0 · github.com/swaidi/greplens</div>
+              <div className="muted">GrepLens {version} · AGPL-3.0 · github.com/swaidi/greplens</div>
               <div className="muted small">OCR by GrepAll · llama.cpp · LlamaIndex · LangGraph · Chroma · PyMuPDF · pdf.js</div>
             </>
           )}

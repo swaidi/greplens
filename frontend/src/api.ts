@@ -12,7 +12,8 @@ export type Segment = {
 };
 export type InkStroke = { color: string; width: number; points: number[][] };
 export type Note = {
-  id: string; document_id: string; mark: "highlight" | "underline" | "ink" | "redact" | null; ink?: InkStroke[]; handwriting?: InkStroke[]; color: string | null; page: number | null;
+  id: string; document_id: string; mark: "highlight" | "underline" | "ink" | "redact" | null; ink?: InkStroke[]; handwriting?: InkStroke[]; handwriting_text?: string; handwriting_lang?: string;
+  handwriting_error?: string; document_name?: string; color: string | null; page: number | null;
   rects: number[][]; segment_id: string | null; start_offset: number | null; end_offset: number | null;
   quote: string; body: string; category: string | null; status: string; tags: string[]; author: string;
   ai_answer: number; location: string | null; created: number;
@@ -61,6 +62,10 @@ export const api = {
     return call<T>("POST", url, form);
   },
 };
+
+let versionCall: Promise<string> | null = null;
+/** The running GrepLens version, as the back end reports it. */
+export const appVersion = () => (versionCall ??= call<{ version: string }>("GET", "/api/health").then((h) => h.version).catch(() => ""));
 
 export function download(url: string) {
   const a = document.createElement("a");

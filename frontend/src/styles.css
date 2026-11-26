@@ -282,3 +282,5 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
 .quiz-opt:hover:not(:disabled) { background: var(--hover); }
 .quiz-opt.right { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-text); }
 .quiz-opt.wrong { background: var(--danger-bg); color: var(--danger-text); }
+.note-card.hit { display: flex; flex-direction: column; gap: 4px; text-align: start; width: 100%; font: inherit; color: var(--text); cursor: pointer; }
+.note-card.hit:hover { border-color: var(--accent-line); }

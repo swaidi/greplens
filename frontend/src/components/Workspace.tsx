@@ -44,6 +44,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [sectionRequest, setSectionRequest] = useState<{ segment_ids: string[]; title: string; ts: number } | null>(null);
   const [mindMap, setMindMap] = useState<MindNode | null>(null);
   const [quiz, setQuiz] = useState<Question[] | null>(null);
+  const [openNote, setOpenNote] = useState<string | null>(null); // a note found by workspace search, opened once its document loads
   const handleSelect = useCallback((s: Selection | null) => { setSel(s); setMenu(null); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const revRef = useRef<HTMLInputElement>(null);
@@ -70,6 +71,10 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (doc?.status === "ready") { api.get<Segment[]>(`/api/documents/${doc.id}/segments`).then(setSegments); loadNotes(); }
   }, [docId, doc?.status, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const n = openNote ? notes.find((x) => x.id === openNote) : null;
+    if (n && segments.length) { setOpenNote(null); setTimeout(() => jumpToNote(n), 300); }
+  }, [notes, segments, openNote]); // eslint-disable-line react-hooks/exhaustive-deps
   // redaction marks are drawn on the page but are not notes
   const noteList = useMemo(() => notes.filter((n) => n.mark !== "redact"), [notes]);
   const redactCount = notes.length - noteList.length;
@@ -282,7 +287,9 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
           )}
         </section>
 
-        <NotesPanel notes={noteList} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
+        <NotesPanel workspaceId={id} documentId={docId ?? undefined}
+          onOpenNote={(n) => { setOpenNote(n.id); if (n.document_id !== docId) setDocId(n.document_id); else { const x = notes.find((y) => y.id === n.id); if (x) jumpToNote(x); } }}
+          notes={noteList} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
           onAdd={doc?.status === "ready" ? async () => {
             const page = doc.kind === "pdf" ? pageInfo[0] : 1;
             const near = segments.find((x) => x.page === page);

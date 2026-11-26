@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, Profile, Workspace } from "../api";
+import { api, appVersion, Profile, Workspace } from "../api";
 import { useI18n } from "../i18n";
 import { IconDownload, IconGear, Logo } from "../icons";
 import type { View } from "../App";
@@ -78,6 +78,8 @@ export default function Home({ go }: { go: (v: View) => void }) {
   const [name, setName] = useState("");
   const [cats, setCats] = useState<string[]>(["general"]);
   const [message, setMessage] = useState("");
+  const [version, setVersion] = useState("");
+  useEffect(() => { appVersion().then(setVersion); }, []);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = () => api.get<Workspace[]>("/api/workspaces").then(setItems);
@@ -100,7 +102,7 @@ export default function Home({ go }: { go: (v: View) => void }) {
   return (
     <div>
       <header className="topbar">
-        <span className="brand"><Logo />GrepLens</span>
+        <span className="brand"><Logo />GrepLens{version && <span className="muted small" style={{ fontWeight: 500, marginInlineStart: 6 }}>{version}</span>}</span>
         <span className="grow" />
         <button className="icon-btn" aria-label={t("settings")} onClick={() => go({ name: "settings" })}><IconGear /></button>
       </header>
