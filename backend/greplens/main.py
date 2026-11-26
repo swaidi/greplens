@@ -65,7 +65,7 @@ def get_settings():
 
 @app.patch("/api/settings")
 def patch_settings(body: dict):
-    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir", "theme"}
+    allowed = {"language", "engine", "threads", "update_check", "author", "setup_complete", "models_dir", "theme", "view"}
     return save_settings({k: v for k, v in body.items() if k in allowed})
 
 
@@ -308,6 +308,19 @@ def update_note(note_id: str, body: dict):
         values["handwriting_text"], error = _read_handwriting(values["handwriting"], lang)
     db.update("notes", note_id, values | {"updated": db.now()})
     return db.get("notes", note_id) | ({"handwriting_error": error} if error else {})
+
+
+@app.post("/api/notes/restore")
+def restore_note(body: dict):
+    """Put a note back exactly as it was (undo of a delete, redo of a create)."""
+    if not body.get("id") or not body.get("document_id"):
+        raise HTTPException(400, "A note id and document are needed.")
+    doc = _must("documents", body["document_id"])
+    columns = {r["name"] for r in db.query("PRAGMA table_info(notes)")}
+    values = {k: v for k, v in body.items() if k in columns} | {"workspace_id": doc["workspace_id"], "updated": db.now()}
+    db.execute("DELETE FROM notes WHERE id = ?", (values["id"],))
+    db.insert("notes", values)
+    return db.get("notes", values["id"])
 
 
 @app.post("/api/notes/{note_id}/read-handwriting")

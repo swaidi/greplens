@@ -10,7 +10,7 @@ import { Update, UpdateOffer } from "./Home";
 type Hardware = { cpu: string; cores: number; ram_gb: number; dedicated_gpu: string | null; gpus: string[]; measured: Record<string, number> };
 type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string; id?: string }>; existing: Existing[];
   updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean> };
-type Settings = { theme?: Theme; language: string; update_check: boolean; author: string; models_dir: string; engine: string };
+type Settings = { theme?: Theme; view?: "split" | "margin" | "page"; language: string; update_check: boolean; author: string; models_dir: string; engine: string };
 type Term = { id: string; en: string; ar: string };
 const SECTIONS: Key[] = ["deviceModels", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
 const roleOf = (e: Existing) => (e as Existing & { role?: string }).role ?? "";
@@ -117,6 +117,16 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                     <span className="muted small">{t(th === "system" ? "themeSystemHint" : th === "light" ? "themeLightHint" : "themeDarkHint")}</span></span>
                 </button>
               ))}
+              <h3 style={{ fontSize: 15, marginTop: 10 }}>{t("notesView")}</h3>
+              {(["split", "margin", "page"] as const).map((v) => (
+                <button key={v} className={`mode-card ${(settings.view ?? "split") === v ? "on" : ""}`} aria-pressed={(settings.view ?? "split") === v}
+                  onClick={() => patch({ view: v })}>
+                  <span className="radio" /><span className="col" style={{ gap: 0 }}>
+                    <strong>{t(v === "split" ? "viewSplit" : v === "margin" ? "viewMargin" : "viewPage")}</strong>
+                    <span className="muted small">{t(v === "split" ? "viewSplitHint" : v === "margin" ? "viewMarginHint" : "viewPageHint")}</span></span>
+                </button>
+              ))}
+              <span className="muted small">{t("gesturesHint")}</span>
             </div>
           )}
 

@@ -4,6 +4,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { InkStroke, Note } from "../api";
 import type { Jump, Selection } from "./Workspace";
+import { isScratch, strokesHit } from "../gestures";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const COLORS: Record<string, string> = { yellow: "#FFE58A", green: "#BDEBC8", blue: "#BFDDFB", pink: "#F9C9DD", orange: "#FFC999" };
@@ -13,10 +14,17 @@ type Props = {
   url: string; notes: Note[]; numbers: Record<string, number>; activeNote: string | null; jump: Jump | null;
   onSelect: (s: Selection | null) => void; onNoteClick: (id: string) => void; onPage: (n: number, total: number) => void;
   onContext: (s: Selection, x: number, y: number) => void;
-  pen: { on: boolean; color: string; width: number; pending: Record<number, InkStroke[]>; add: (page: number, stroke: InkStroke) => void };
+  pen: { on: boolean; color: string; width: number; pending: Record<number, InkStroke[]>; add: (page: number, stroke: InkStroke) => void;
+    /** remove ink a scratch-out or the pen's eraser touched: pending strokes by index, saved ink notes by stroke index */
+    erase: (page: number, pending: number[], saved: { note: Note; strokes: number[] }[]) => void };
+  /** room kept beside each page for margin notes (pixels) */
+  reserve?: number;
+  renderMargin?: (page: number, height: number) => React.ReactNode;
+  renderOverlay?: (page: number, height: number, width: number) => React.ReactNode;
 };
 
-export default function PdfView({ url, notes, numbers, activeNote, jump, onSelect, onNoteClick, onPage, onContext, pen }: Props) {
+export default function PdfView({ url, notes, numbers, activeNote, jump, onSelect, onNoteClick, onPage, onContext, pen, reserve = 0,
+  renderMargin, renderOverlay }: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [sizes, setSizes] = useState<{ w: number; h: number }[]>([]);
   const [width, setWidth] = useState(820);
@@ -41,10 +49,12 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
   useEffect(() => {
     const el = boxRef.current?.parentElement;
     if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(Math.min(1000, Math.max(320, el.clientWidth - 64))));
+    const fit = () => setWidth(Math.min(1000, Math.max(300, el.clientWidth - 64 - reserve)));
+    const ro = new ResizeObserver(fit);
     ro.observe(el);
+    fit();
     return () => ro.disconnect();
-  }, []);
+  }, [reserve]);
 
   // report the page in view
   useEffect(() => {
@@ -82,7 +92,7 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
     if (pen.on) return;
     const sel = readSelection();
     if (sel) onSelect(sel);
-    else if (!(e.target as HTMLElement).closest(".mark, .badge, .ink-mark")) onSelect(null);
+    else if (!(e.target as HTMLElement).closest(".mark, .badge, .ink-mark, .page-pop, .margin-rail")) onSelect(null);
   };
   const handleContext = (e: React.MouseEvent) => {
     const sel = readSelection();
@@ -96,11 +106,15 @@ export default function PdfView({ url, notes, numbers, activeNote, jump, onSelec
       {pdf && sizes.map((size, i) => {
         const scale = width / size.w;
         return (
-          <div key={i} ref={(el) => { pageRefs.current[i] = el; }} data-page={i + 1}>
-            <PdfPage pdf={pdf} number={i + 1} scale={scale} width={width} height={size.h * scale}
-              notes={notes.filter((n) => n.page === i + 1 && n.rects?.length && n.mark !== "ink")} numbers={numbers} activeNote={activeNote}
-              inkNotes={notes.filter((n) => n.page === i + 1 && n.mark === "ink" && n.ink?.length)}
-              onNoteClick={onNoteClick} flash={jump && jump.page === i + 1 ? jump : null} pen={pen} />
+          <div key={i} ref={(el) => { pageRefs.current[i] = el; }} data-page={i + 1} className="page-row">
+            <div className="page-wrap">
+              <PdfPage pdf={pdf} number={i + 1} scale={scale} width={width} height={size.h * scale}
+                notes={notes.filter((n) => n.page === i + 1 && n.rects?.length && n.mark !== "ink")} numbers={numbers} activeNote={activeNote}
+                inkNotes={notes.filter((n) => n.page === i + 1 && n.mark === "ink" && n.ink?.length)}
+                onNoteClick={onNoteClick} flash={jump && jump.page === i + 1 ? jump : null} pen={pen} />
+              {renderOverlay?.(i + 1, size.h * scale, width)}
+            </div>
+            {renderMargin?.(i + 1, size.h * scale)}
           </div>
         );
       })}
@@ -137,6 +151,20 @@ export const strokePath = (pts: number[][], w: number, h: number) =>
 
 function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, activeNote, onNoteClick, flash, pen }: PageProps) {
   const [drawing, setDrawing] = useState<InkStroke | null>(null);
+  const eraser = useRef<number[][] | null>(null);
+  const isEraser = (e: React.PointerEvent) => e.pointerType === "pen" && (e.button === 5 || (e.buttons & 32) !== 0);
+  // remove the ink a path touched; returns false when it touched nothing
+  const eraseAlong = (path: number[][], radius: number) => {
+    const pendingHits = strokesHit(pen.pending[number] ?? [], path, width, height, radius);
+    const saved = inkNotes.map((n) => ({ note: n, strokes: strokesHit(n.ink ?? [], path, width, height, radius) })).filter((x) => x.strokes.length);
+    if (!pendingHits.length && !saved.length) return false;
+    pen.erase(number, pendingHits, saved);
+    return true;
+  };
+  const pagePoint = (e: React.PointerEvent, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
   const sawPen = useRef(false);
   const ref = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -176,7 +204,15 @@ function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, 
 
   const style = { width, height, "--scale-factor": scale, "--total-scale-factor": scale, "--user-unit": 1 } as React.CSSProperties;
   return (
-    <div ref={ref} className="pdf-page" data-page={number} style={style}>
+    <div ref={ref} className="pdf-page" data-page={number} style={style}
+      onPointerDownCapture={(e) => { // the pen's eraser end removes ink, with or without the Pen tool
+        if (!isEraser(e)) return;
+        e.preventDefault(); e.stopPropagation();
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+        eraser.current = [pagePoint(e, e.currentTarget)];
+      }}
+      onPointerMoveCapture={(e) => { if (eraser.current) { e.stopPropagation(); eraser.current.push(pagePoint(e, e.currentTarget)); } }}
+      onPointerUpCapture={(e) => { if (eraser.current) { e.stopPropagation(); eraseAlong(eraser.current, 10); eraser.current = null; } }}>
       <canvas ref={canvasRef} />
       <div ref={textRef} className="textLayer" />
       {notes.map((n) => n.rects.map((r, j) => (
@@ -224,7 +260,12 @@ function PdfPage({ pdf, number, scale, width, height, notes, inkNotes, numbers, 
             if (Math.hypot((pt[0] - last[0]) * r.width, (pt[1] - last[1]) * r.height) >= 1.5)
               setDrawing({ ...drawing, points: [...drawing.points, pt.map((v) => Math.round(v * 10000) / 10000)] });
           }}
-          onPointerUp={() => { if (drawing && drawing.points.length > 1) pen.add(number, drawing); setDrawing(null); }}
+          onPointerUp={() => {
+            // a scratch-out over ink erases it; anywhere else the scribble stays as ink
+            if (drawing && drawing.points.length > 1 && !(isScratch(drawing.points, width, height) && eraseAlong(drawing.points, 6)))
+              pen.add(number, drawing);
+            setDrawing(null);
+          }}
           onPointerCancel={() => setDrawing(null)} />
       )}
       {flash?.box && <div key={flash.ts} className="flash" style={{ left: `${flash.box[0] * 100 - 0.5}%`, top: `${flash.box[1] * 100 - 0.5}%`,

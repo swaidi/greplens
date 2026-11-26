@@ -393,3 +393,12 @@ def test_handwriting_read_and_note_search(client, workspace, pdf_doc):
     import zipfile
     data = client.get(f"/api/documents/{pdf_doc['id']}/export.docx").content
     assert "Handwriting reads: ملاحظة بخط اليد" in zipfile.ZipFile(io.BytesIO(data)).read("word/comments.xml").decode()
+
+
+def test_undo_restore_note_and_view_setting(client, pdf_doc):
+    note = client.post("/api/notes", json={"document_id": pdf_doc["id"], "page": 1, "body": "to undo", "tags": ["x"],
+                                           "mark": "highlight", "rects": [[0.1, 0.1, 0.2, 0.02]]}).json()
+    client.delete(f"/api/notes/{note['id']}")
+    back = client.post("/api/notes/restore", json=note | {"document_name": "ignored"}).json()
+    assert back["id"] == note["id"] and back["body"] == "to undo" and back["tags"] == ["x"] and back["rects"] == note["rects"]
+    assert client.patch("/api/settings", json={"view": "margin"}).json()["view"] == "margin"

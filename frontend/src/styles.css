@@ -98,7 +98,7 @@ textarea.input { resize: vertical; }
 
 /* workspace layout */
 .app { height: 100vh; display: flex; flex-direction: column; }
-.ws-main { flex: 1 1 auto; min-height: 0; display: flex; flex-wrap: wrap; }
+.ws-main { flex: 1 1 auto; min-height: 0; display: flex; position: relative; }
 .doc-pane { flex: 999 1 560px; min-width: 0; height: 100%; overflow: auto; display: flex; flex-direction: column;
   align-items: center; gap: 14px; padding: 16px 24px 32px; position: relative; }
 .notes-pane { flex: 1 1 300px; max-width: 340px; min-width: 0; height: 100%; overflow: auto; background: var(--soft);
@@ -284,3 +284,37 @@ html[dir="rtl"] .bubble { border-radius: 12px 12px 12px 2px; }
 .quiz-opt.wrong { background: var(--danger-bg); color: var(--danger-text); }
 .note-card.hit { display: flex; flex-direction: column; gap: 4px; text-align: start; width: 100%; font: inherit; color: var(--text); cursor: pointer; }
 .note-card.hit:hover { border-color: var(--accent-line); }
+
+/* 0.1.6 notes views: split screen, margin notes, notes on the page */
+.page-row { display: flex; align-items: flex-start; gap: 44px; }
+.page-wrap { position: relative; }
+.margin-rail { position: relative; width: 286px; flex: none; }
+.rail-item { position: absolute; left: 0; right: 0; transition: top .15s ease; }
+.note-chip { display: flex; flex-direction: column; gap: 6px; width: 100%; text-align: start; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; box-shadow: 0 1px 2px rgba(16,24,40,.06); }
+.note-chip:hover { border-color: var(--accent-line); }
+.note-chip .hw-paper { max-height: 70px; }
+.chip-text { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.page-pop { position: absolute; z-index: 20; box-shadow: 0 14px 36px rgba(16,24,40,.28); border-radius: 12px; }
+.page-pop .note-card { margin: 0; background: var(--panel); }
+.page-pop.inline { position: static; margin: 8px 0 14px; box-shadow: 0 8px 24px rgba(16,24,40,.18); }
+.text-doc.with-margin { max-width: 1240px; }
+.seg-row { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; align-items: start; }
+.margin-col { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.btn.icon-only { padding: 0 10px; }
+.input.view-pick { width: auto; flex: none; min-height: 36px; padding: 0 10px; }
+.stack { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.stack .doc-pane { flex: 1 1 auto; height: auto; min-height: 120px; }
+.dock-handle { flex: none; height: 28px; display: flex; align-items: center; justify-content: center; cursor: ns-resize; touch-action: none;
+  background: var(--panel); border-top: 1px solid var(--line-strong); }
+.dock-handle i { width: 64px; height: 6px; border-radius: 3px; background: var(--line-strong); }
+.dock-wrap { flex: none; min-height: 56px; max-height: 85%; display: flex; overflow: hidden; }
+.assist-pane.dock { flex: 1; max-width: none; height: 100%; border-inline-start: 0; }
+.notes-pane.in-dock, .notes-pane.in-drawer { flex: 1 1 auto; max-width: none; border: 0; min-height: 0; }
+.drawer-back { position: absolute; inset: 0; background: rgba(16,24,40,.18); z-index: 39; }
+.drawer { position: absolute; top: 0; bottom: 0; inset-inline-end: 0; width: min(440px, 92%); z-index: 40; display: flex; flex-direction: column;
+  background: var(--panel); box-shadow: -10px 0 30px rgba(16,24,40,.22); }
+.drawer-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--line); min-height: 56px; }
+.assist-pane.in-drawer { flex: 1; max-width: none; height: auto; min-height: 0; border: 0; }
+.compact .doc-toolbar { gap: 8px; }
+.compact .search-box { flex: 1 1 160px; }

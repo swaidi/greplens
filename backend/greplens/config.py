@@ -50,6 +50,7 @@ DEFAULTS = {
     "setup_complete": False,
     "language": "en",
     "theme": "system",            # system | light | dark
+    "view": "split",              # split | margin | page: where notes are shown beside the document
     "models_dir": "",
     "engine": "builtin",          # builtin (bundled llama.cpp) | ollama
     "models": {},                 # role -> {"path": ..., "id": ..., "source": ...}

@@ -108,6 +108,12 @@ const en = {
   readAgain: "Read again", readInArabic: "Read as Arabic", readInEnglish: "Read as English", hwLang: "Handwriting language",
   hwReading: "Reading…", hwReadFailed: "Windows could not read this handwriting.",
   hwUnavailable: "Windows cannot read handwriting on this computer yet. Add it in Settings > Time & language > Language & region > (language) > Language options > Handwriting.",
+  undo: "Undo", redo: "Redo", notesView: "Notes view", viewSplit: "Split screen", viewMargin: "Margin notes", viewPage: "Notes on the page",
+  viewSplitHint: "Document with the notes and assistant panels beside it, or below it on an upright screen.",
+  viewMarginHint: "Notes in a column beside the page, level with their highlights.",
+  viewPageHint: "Tap a highlight to open its note right under the text. The full list is under Notes.",
+  assistant: "Assistant", dockHandle: "Drag to resize; tap to fold or open", tapToWrite: "Tap to write…",
+  gesturesHint: "Undo: Ctrl+Z or a two-finger tap. Redo: Ctrl+Y or a three-finger tap. With the pen, scribble over ink to erase it, or use the pen's eraser end.",
 };
 export type Key = keyof typeof en;
 
@@ -219,6 +225,12 @@ const ar: Record<Key, string> = {
   readAgain: "اقرأ مجددًا", readInArabic: "اقرأ بالعربية", readInEnglish: "اقرأ بالإنجليزية", hwLang: "لغة خط اليد",
   hwReading: "جارٍ القراءة…", hwReadFailed: "تعذر على Windows قراءة خط اليد هذا.",
   hwUnavailable: "لا يستطيع Windows قراءة خط اليد على هذا الجهاز بعد. أضفه من الإعدادات > الوقت واللغة > اللغة والمنطقة > (اللغة) > خيارات اللغة > الكتابة اليدوية.",
+  undo: "تراجع", redo: "إعادة", notesView: "عرض الملاحظات", viewSplit: "شاشة مقسومة", viewMargin: "ملاحظات في الهامش", viewPage: "ملاحظات على الصفحة",
+  viewSplitHint: "المستند ولوحتا الملاحظات والمساعد بجانبه، أو أسفله عند حمل الشاشة عموديًا.",
+  viewMarginHint: "الملاحظات في عمود بجانب الصفحة، بمحاذاة التظليل.",
+  viewPageHint: "انقر على التظليل لفتح ملاحظته أسفل النص مباشرة. القائمة الكاملة تحت الملاحظات.",
+  assistant: "المساعد", dockHandle: "اسحب لتغيير الحجم، وانقر للطي أو الفتح", tapToWrite: "انقر للكتابة…",
+  gesturesHint: "التراجع: Ctrl+Z أو النقر بإصبعين. الإعادة: Ctrl+Y أو النقر بثلاثة أصابع. بالقلم: اشطب فوق الرسم لمسحه، أو استخدم طرف الممحاة في القلم.",
 };
 
 export const dictionaries = { en, ar };

@@ -6,10 +6,12 @@ import { colorOf } from "./PdfView";
 type Props = {
   segments: Segment[]; notes: Note[]; numbers: Record<string, number>; activeNote: string | null; jump: Jump | null;
   onSelect: (s: Selection | null) => void; onNoteClick: (id: string) => void; onContext: (s: Selection, x: number, y: number) => void;
+  renderMargin?: (segmentId: string) => React.ReactNode;
+  renderOverlay?: (segmentId: string) => React.ReactNode;
 };
 
 /** Word, Excel, PowerPoint and text documents: shown as paragraphs, with marks stored as character offsets. */
-export default function TextView({ segments, notes, numbers, activeNote, jump, onSelect, onNoteClick, onContext }: Props) {
+export default function TextView({ segments, notes, numbers, activeNote, jump, onSelect, onNoteClick, onContext, renderMargin, renderOverlay }: Props) {
   const refs = useRef<Record<string, HTMLParagraphElement | null>>({});
 
   useEffect(() => {
@@ -58,8 +60,8 @@ export default function TextView({ segments, notes, numbers, activeNote, jump, o
 
   let lastHeader = "";
   return (
-    <article ref={articleRef} className="text-doc" dir="auto"
-      onPointerUp={(e) => { const s = read(); if (s) onSelect(s); else if (!(e.target as HTMLElement).closest("mark")) onSelect(null); }}
+    <article ref={articleRef} className={`text-doc ${renderMargin ? "with-margin" : ""}`} dir="auto"
+      onPointerUp={(e) => { const s = read(); if (s) onSelect(s); else if (!(e.target as HTMLElement).closest("mark, .page-pop, .margin-rail")) onSelect(null); }}
       onContextMenu={(e) => { const s = read(); if (s) { e.preventDefault(); onContext(s, e.clientX, e.clientY); } }}>
       {segments.map((seg) => {
         const header = [seg.article, seg.approx_page ? `≈ Page ${seg.page}` : seg.page ? `Page ${seg.page}` : ""].filter(Boolean).join(" · ");
@@ -82,9 +84,13 @@ export default function TextView({ segments, notes, numbers, activeNote, jump, o
         }
         parts.push(seg.text.slice(cursor));
         return (
-          <div key={seg.id}>
-            {showHeader && header && <div className="loc">{header}</div>}
-            <p data-seg={seg.id} ref={(el) => { refs.current[seg.id] = el; }}>{parts}</p>
+          <div key={seg.id} className={renderMargin ? "seg-row" : undefined}>
+            <div>
+              {showHeader && header && <div className="loc">{header}</div>}
+              <p data-seg={seg.id} ref={(el) => { refs.current[seg.id] = el; }}>{parts}</p>
+              {renderOverlay?.(seg.id)}
+            </div>
+            {renderMargin?.(seg.id)}
           </div>
         );
       })}

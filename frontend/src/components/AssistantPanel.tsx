@@ -8,23 +8,29 @@ import ToolsTab, { MindNode, Question } from "./Tools";
 type Props = { doc: Doc | null; workspace: Workspace | null; segments: Segment[]; notes: Note[]; activeNote: string | null;
   onJump: (segmentId: string | null, page?: number) => void; reloadNotes: () => void; prefill: { text: string; ts: number } | null;
   page: number; sectionRequest: { segment_ids: string[]; title: string; ts: number } | null; redactCount: number;
-  onOpenMindMap: (m: MindNode) => void; onOpenQuiz: (q: Question[]) => void };
+  onOpenMindMap: (m: MindNode) => void; onOpenQuiz: (q: Question[]) => void;
+  /** in Split screen on a narrow or upright screen, the notes list shares this panel as its first tab */
+  notesTab?: React.ReactNode; className?: string };
 
 export default function AssistantPanel(props: Props) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<"ask" | "review" | "tools">("ask");
+  const [tab, setTab] = useState<"notes" | "ask" | "review" | "tools">(props.notesTab ? "notes" : "ask");
   const [cats, setCats] = useState<string[]>([]);
   useEffect(() => { if (props.workspace) setCats(props.workspace.categories ?? []); }, [props.workspace?.id]); // eslint-disable-line
   useEffect(() => { if (props.prefill) setTab("ask"); }, [props.prefill]);
   useEffect(() => { if (props.sectionRequest) setTab("tools"); }, [props.sectionRequest]);
+  useEffect(() => { if (!props.notesTab && tab === "notes") setTab("ask"); }, [props.notesTab, tab]);
+  useEffect(() => { if (props.notesTab && props.activeNote) setTab("notes"); }, [props.activeNote]); // eslint-disable-line
   return (
-    <aside className="assist-pane" aria-label="Assistant">
+    <aside className={props.className ?? "assist-pane"} aria-label="Assistant">
       <div className="tabs" role="tablist">
+        {props.notesTab && <button role="tab" aria-selected={tab === "notes"} className={tab === "notes" ? "on" : ""} onClick={() => setTab("notes")}>{t("notes")}</button>}
         <button role="tab" aria-selected={tab === "ask"} className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>{t("ask")}</button>
         <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{t("review")}</button>
         <button role="tab" aria-selected={tab === "tools"} className={tab === "tools" ? "on" : ""} onClick={() => setTab("tools")}>{t("tools")}</button>
       </div>
-      {props.doc?.status !== "ready" ? <div className="muted small" style={{ padding: 16 }}>{props.doc ? t("preparing") : t("noDocuments")}</div>
+      {tab === "notes" && props.notesTab ? props.notesTab
+        : props.doc?.status !== "ready" ? <div className="muted small" style={{ padding: 16 }}>{props.doc ? t("preparing") : t("noDocuments")}</div>
         : tab === "ask" ? <AskTab {...props} cats={cats} setCats={setCats} />
         : tab === "review" ? <ReviewTab {...props} cats={cats} setCats={setCats} />
         : <ToolsTab doc={props.doc!} page={props.page} onJump={props.onJump} reloadNotes={props.reloadNotes} sectionRequest={props.sectionRequest}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Doc, download } from "../api";
 import { Key, useI18n } from "../i18n";
+import { notesApi } from "../undo";
 
 export type Job = {
   id: string; kind: string; status: string; progress: number; message: string; file: string | null;
@@ -157,8 +158,8 @@ function SummaryTool({ doc, page, reloadNotes, sectionRequest }: ToolsProps) {
         </div>
           <div className="actions">
             <button className="btn small" onClick={async () => {
-              await api.post("/api/notes", { document_id: doc.id, body: `${t("summaryOf")} (${r.pages})\n\n${r.text}`, category: "info",
-                ai_answer: true, page: null, location: r.section || r.pages, quote: "" });
+              await notesApi.create({ document_id: doc.id, body: `${t("summaryOf")} (${r.pages})\n\n${r.text}`, category: "info",
+                ai_answer: 1, page: null, location: r.section || r.pages, quote: "" });
               reloadNotes();
             }}>{t("saveAsNote")}</button>
             <button className="btn small" onClick={() => navigator.clipboard?.writeText(r.text)}>{t("copy")}</button>

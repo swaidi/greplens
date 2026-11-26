@@ -5,12 +5,16 @@ import { IconChevron, IconClose, IconDoc, IconDownload, IconGear, IconHighlight,
 import type { View } from "../App";
 import PdfView, { colorOf } from "./PdfView";
 import TextView from "./TextView";
-import NotesPanel from "./NotesPanel";
+import NotesPanel, { NoteCard, NoteChip } from "./NotesPanel";
+import { MarginRail } from "./Margin";
+import { history, notesApi } from "../undo";
+import { useTapGestures } from "../gestures";
 import AssistantPanel from "./AssistantPanel";
 import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
 export type Selection = { page: number; rects: number[][]; quote: string; segment_id: string | null; start: number | null;
   end: number | null; x: number; y: number };
+export type NotesView = "split" | "margin" | "page";
 export type Jump = { page?: number; box?: number[]; segment_id?: string; ts: number };
 type OutlineItem = { level: number; label: string; title: string; page: number; segment_ids: string[]; approx?: boolean };
 type Translation = { text: string; translation: string; glossary: boolean; note: string; source: string; target: string };
@@ -38,7 +42,29 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const [docMenu, setDocMenu] = useState(false);
   const [penOn, setPenOn] = useState(false);
   const [penColor, setPenColor] = useState("#D92D20");
-  const [pending, setPending] = useState<Record<number, InkStroke[]>>({});
+  const [pending, setPendingRaw] = useState<Record<number, InkStroke[]>>({});
+  // the strokes drawn since the Pen tool was opened can be undone and redone one by one
+  const penPast = useRef<Record<number, InkStroke[]>[]>([]);
+  const penFuture = useRef<Record<number, InkStroke[]>[]>([]);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const setPending = useCallback((next: Record<number, InkStroke[]>) => {
+    penPast.current.push(pendingRef.current); penFuture.current = []; setPendingRaw(next);
+  }, []);
+  const [view, setViewState] = useState<NotesView>("split");
+  const [compact, setCompact] = useState(() => window.innerWidth < 1100);
+  const [drawer, setDrawer] = useState<"notes" | "assist" | null>(null);
+  const [dock, setDock] = useState(() => { try { return Number(localStorage.getItem("gl-dock")) || 0.42; } catch { return 0.42; } });
+  const [, setTick] = useState(0);
+  useEffect(() => history.subscribe(() => setTick((x) => x + 1)), []);
+  useEffect(() => { api.get<{ view?: NotesView }>("/api/settings").then((st) => st.view && setViewState(st.view)).catch(() => {}); }, []);
+  useEffect(() => {
+    const onResize = () => setCompact(window.innerWidth < 1100);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  useEffect(() => { try { localStorage.setItem("gl-dock", String(dock)); } catch { /* storage may be unavailable */ } }, [dock]);
+  const setView = (v: NotesView) => { setViewState(v); setDrawer(null); api.patch("/api/settings", { view: v }).catch(() => {}); };
   const [outline, setOutline] = useState<OutlineItem[] | null>(null);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [sectionRequest, setSectionRequest] = useState<{ segment_ids: string[]; title: string; ts: number } | null>(null);
@@ -67,7 +93,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (docId) setNotes(await api.get<Note[]>(`/api/documents/${docId}/notes`));
   }, [docId]);
   useEffect(() => {
-    setSel(null); setActive(null); setSegments([]); setNotes([]); setOutline(null); setOutlineOpen(false);
+    setSel(null); setActive(null); setSegments([]); setNotes([]); setOutline(null); setOutlineOpen(false); history.clear();
     if (doc?.status === "ready") { api.get<Segment[]>(`/api/documents/${doc.id}/segments`).then(setSegments); loadNotes(); }
   }, [docId, doc?.status, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -85,7 +111,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   };
   const clickMark = async (nid: string) => {
     const n = notes.find((x) => x.id === nid);
-    if (n?.mark === "redact") { await api.del(`/api/notes/${nid}`); loadNotes(); } else setActive(nid);
+    if (n?.mark === "redact") { await notesApi.remove(n); loadNotes(); } else setActive(nid);
   };
 
   const segmentFor = (s: Selection): Segment | undefined => {
@@ -98,7 +124,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
   const createNote = async (mark: "highlight" | "underline" | "redact" | null, extra: Partial<Note> = {}) => {
     if (!sel || !doc) return;
     const seg = segmentFor(sel);
-    const note = await api.post<Note>("/api/notes", {
+    const note = await notesApi.create({
       document_id: doc.id, mark, color: mark && mark !== "redact" ? color : null, page: sel.page, rects: sel.rects, quote: sel.quote,
       segment_id: seg?.id ?? null, start_offset: sel.start, end_offset: sel.end, body: "", category: mark ? null : "query",
       location: seg?.location ?? (sel.page ? `Page ${sel.page}` : null), ...extra,
@@ -109,13 +135,55 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     if (mark !== "redact") setActive(note.id);
   };
 
-  const addStroke = useCallback((page: number, stroke: InkStroke) =>
-    setPending((p) => ({ ...p, [page]: [...(p[page] ?? []), stroke] })), []);
-  const undoStroke = () => setPending((p) => {
-    const pages = Object.keys(p).map(Number).filter((k) => p[k].length);
-    const last = pages[pages.length - 1];
-    return last ? { ...p, [last]: p[last].slice(0, -1) } : p;
-  });
+  const addStroke = useCallback((page: number, stroke: InkStroke) => {
+    const p = pendingRef.current;
+    setPending({ ...p, [page]: [...(p[page] ?? []), stroke] });
+  }, [setPending]);
+  const undoStroke = () => {
+    const prev = penPast.current.pop();
+    if (prev) { penFuture.current.push(pendingRef.current); setPendingRaw(prev); }
+  };
+  const redoStroke = () => {
+    const next = penFuture.current.pop();
+    if (next) { penPast.current.push(pendingRef.current); setPendingRaw(next); }
+  };
+  // a scratch-out or the pen's eraser: drop the strokes it touched (each erase is one undo step)
+  const eraseInk = useCallback(async (page: number, pendingHits: number[], saved: { note: Note; strokes: number[] }[]) => {
+    if (pendingHits.length) {
+      const p = pendingRef.current;
+      setPending({ ...p, [page]: (p[page] ?? []).filter((_, i) => !pendingHits.includes(i)) });
+    }
+    for (const { note, strokes } of saved) {
+      const keep = (note.ink ?? []).filter((_, i) => !strokes.includes(i));
+      if (keep.length) await notesApi.patch(note, { ink: keep });
+      else await notesApi.remove(note);
+    }
+    if (saved.length) loadNotes();
+  }, [setPending, loadNotes]);
+  const undo = useCallback(async () => {
+    if (penOn && penPast.current.length) { undoStroke(); return; }
+    if (await history.undo()) loadNotes();
+  }, [penOn, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const redo = useCallback(async () => {
+    if (penOn && penFuture.current.length) { redoStroke(); return; }
+    if (await history.redo()) loadNotes();
+  }, [penOn, loadNotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z); text boxes keep their own typing undo
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const el = e.target as HTMLElement;
+      if (el.closest("textarea, input:not([type=checkbox]):not([type=radio]), [contenteditable=true]")) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (key === "y" || (key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+  const docPaneRef = useRef<HTMLElement | null>(null);
+  const getDocPane = useCallback(() => docPaneRef.current, []);
+  useTapGestures(getDocPane, undo, redo);
   const finishPen = async () => {
     if (doc) {
       for (const [page, strokes] of Object.entries(pending)) {
@@ -123,12 +191,12 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         const ys = strokes.flatMap((st) => st.points.map((pt) => pt[1]));
         const near = segments.filter((x) => x.page === Number(page) && x.bbox?.length)
           .sort((a, b) => Math.abs(a.bbox[1] - Math.min(...ys)) - Math.abs(b.bbox[1] - Math.min(...ys)))[0];
-        await api.post("/api/notes", { document_id: doc.id, mark: "ink", page: Number(page), ink: strokes, quote: "",
+        await notesApi.create({ document_id: doc.id, mark: "ink", page: Number(page), ink: strokes, quote: "",
           body: "", segment_id: near?.id ?? null, location: near?.location ?? `Page ${page}` });
       }
       await loadNotes();
     }
-    setPending({}); setPenOn(false);
+    setPendingRaw({}); penPast.current = []; penFuture.current = []; setPenOn(false);
   };
 
   const translate = async (s: Selection) => {
@@ -184,38 +252,67 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       top: sel.y - h - 12 > 8 ? sel.y - h - 12 : sel.y + 28 });
   }, [sel, lang]);
 
-  return (
-    <div className="app" onClick={() => setDocMenu(false)}>
-      <header className="topbar">
-        <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
-        <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
-        <div style={{ position: "relative" }}>
-          <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
-            <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>
-          {docMenu && (
-            <div className="ctx-menu" style={{ position: "absolute", top: 40, insetInlineStart: 0 }}>
-              {docs.map((d) => <button key={d.id} onClick={() => setDocId(d.id)}>{d.filename}{d.revision_of ? " ·  rev." : ""}</button>)}
-            </div>
-          )}
-        </div>
-        <input ref={fileRef} type="file" hidden accept=".pdf,.docx,.xlsx,.xlsm,.pptx,.txt,.md,.csv"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
-        <input ref={revRef} type="file" hidden accept=".pdf,.docx,.xlsx,.xlsm,.pptx,.txt,.md,.csv"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f && doc) upload(f, doc.id); e.target.value = ""; }} />
-        <button className="btn" onClick={() => fileRef.current?.click()}><IconPlus />{t("addDocument")}</button>
-        {doc && <button className="btn" onClick={() => revRef.current?.click()}>{t("addRevision")}</button>}
-        <span className="grow" />
-        {doc && <button className="btn" onClick={() => download(`/api/documents/${doc.id}/export.docx`)}><IconDownload />{t("exportWord")}</button>}
-        <button className="btn" onClick={() => download(`/api/workspaces/${id}/package`)}><IconShare />{t("sharePkg")}</button>
-        <div className="seg" role="group" aria-label={t("language")}>
-          <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
-          <button className={lang === "ar" ? "on" : ""} onClick={() => setLang("ar")}>عربي</button>
-        </div>
-        <button className="icon-btn" aria-label={t("settings")} onClick={() => go({ name: "settings", back: { name: "workspace", id } })}><IconGear /></button>
-      </header>
-
-      <main className="ws-main">
-        <section className="doc-pane" aria-label="Document">
+  // ---------- where notes are shown: split panels, margin beside the page, or on the page itself
+  const anchorY = (n: Note) => n.rects?.length ? n.rects[0][1]
+    : n.ink?.length ? Math.min(...n.ink.flatMap((st) => st.points.map((pt) => pt[1])))
+    : (segments.find((x) => x.id === n.segment_id)?.bbox?.[1] ?? 0.03);
+  const bottomY = (n: Note) => n.rects?.length ? Math.max(...n.rects.map((r) => r[1] + r[3]))
+    : n.ink?.length ? Math.max(...n.ink.flatMap((st) => st.points.map((pt) => pt[1]))) : anchorY(n) + 0.02;
+  const fullCard = (n: Note) => <NoteCard note={n} number={numbers[n.id]} active onActive={() => {}} reload={loadNotes} onClose={() => setActive(null)} />;
+  const railItem = (n: Note) => active === n.id ? fullCard(n) : <NoteChip note={n} number={numbers[n.id]} onActive={() => setActive(n.id)} />;
+  const pdfMargin = view === "margin" ? (page: number, h: number) => (
+    <MarginRail height={h} items={noteList.filter((n) => n.page === page).map((n) => ({ id: n.id, y: anchorY(n) * h }))}
+      render={(nid: string) => { const n = noteList.find((x) => x.id === nid); return n ? railItem(n) : null; }} />) : undefined;
+  const pdfOverlay = view === "page" ? (page: number, h: number, w: number) => {
+    const n = noteList.find((x) => x.id === active && x.page === page);
+    if (!n) return null;
+    const width = Math.min(460, w - 24);
+    return <div className="page-pop" style={{ top: bottomY(n) * h + 10, left: (w - width) / 2, width }}>{fullCard(n)}</div>;
+  } : undefined;
+  const textMargin = view === "margin" ? (segId: string) => {
+    const list = noteList.filter((n) => n.segment_id === segId);
+    return <div className="margin-col">{list.map((n) => <div key={n.id}>{railItem(n)}</div>)}</div>;
+  } : undefined;
+  const textOverlay = view === "page" ? (segId: string) => {
+    const n = noteList.find((x) => x.id === active && x.segment_id === segId);
+    return n ? <div className="page-pop inline">{fullCard(n)}</div> : null;
+  } : undefined;
+  const notesPanel = (cls: string, inDrawer = false) => (
+    <NotesPanel className={cls} workspaceId={id} documentId={docId ?? undefined}
+            onOpenNote={(n) => { setOpenNote(n.id); if (n.document_id !== docId) setDocId(n.document_id); else { const x = notes.find((y) => y.id === n.id); if (x) jumpToNote(x); } }}
+            notes={noteList} numbers={numbers} active={active} onActive={setActive} onJump={(n) => { if (inDrawer) setDrawer(null); jumpToNote(n); }} reload={loadNotes}
+            onAdd={doc?.status === "ready" ? async () => {
+              const page = doc.kind === "pdf" ? pageInfo[0] : 1;
+              const near = segments.find((x) => x.page === page);
+              const n = await notesApi.create({ document_id: doc.id, page, category: "info", body: "",
+                segment_id: near?.id ?? null, location: near?.location ?? `Page ${page}` });
+              await loadNotes(); setActive(n.id);
+            } : undefined} />
+  );
+  const assistant = (cls: string, notesTab?: React.ReactNode) => (
+    <AssistantPanel className={cls} notesTab={notesTab} doc={doc} workspace={ws} segments={segments} notes={notes} activeNote={active}
+            onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill}
+            page={doc?.kind === "pdf" ? pageInfo[0] : 1} sectionRequest={sectionRequest} redactCount={redactCount}
+            onOpenMindMap={setMindMap} onOpenQuiz={setQuiz} />
+  );
+  const startDockDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const main = e.currentTarget.parentElement!;
+    const box = main.getBoundingClientRect();
+    const y0 = e.clientY, f0 = dock;
+    let moved = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientY - y0) > 6) moved = true;
+      if (moved) setDock(Math.min(0.8, Math.max(0.06, (box.bottom - ev.clientY) / box.height)));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      if (!moved) setDock(f0 < 0.12 ? 0.42 : 0.06); // a tap folds or opens the panel
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
+  const docPane = (
+        <section ref={docPaneRef} className="doc-pane" aria-label="Document">
           {doc?.status === "ready" && (
             <div className="doc-toolbar">
               <button className={`btn ${outlineOpen ? "soft" : ""}`} aria-expanded={outlineOpen} onClick={openOutline}>
@@ -238,6 +335,20 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
                   <span className="muted small">{t("penHint")}</span>
                 </div>
               )}
+              <button className="btn icon-only" aria-label={t("undo")} title={`${t("undo")} (Ctrl+Z)`} disabled={!(penOn ? penPast.current.length : history.canUndo())}
+                onClick={undo}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg></button>
+              <button className="btn icon-only" aria-label={t("redo")} title={`${t("redo")} (Ctrl+Y)`} disabled={!(penOn ? penFuture.current.length : history.canRedo())}
+                onClick={redo}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg></button>
+              <select className="input view-pick" value={view} aria-label={t("notesView")} title={t("notesView")}
+                onChange={(e) => setView(e.target.value as NotesView)}>
+                <option value="split">{t("viewSplit")}</option>
+                <option value="margin">{t("viewMargin")}</option>
+                <option value="page">{t("viewPage")}</option>
+              </select>
+              {view !== "split" && <button className={`btn ${drawer === "notes" ? "soft" : ""}`} onClick={() => setDrawer(drawer === "notes" ? null : "notes")}>
+                {t("notes")} · {noteList.length}</button>}
+              {compact && view !== "split" && <button className={`btn ${drawer === "assist" ? "soft" : ""}`} onClick={() => setDrawer(drawer === "assist" ? null : "assist")}>
+                {t("assistant")}</button>}
               <span className="grow" />
               <label className="search-box"><IconSearch /><span className="sr">{t("searchDoc")}</span>
                 <input placeholder={t("searchDoc")} value={search} onChange={(e) => setSearch(e.target.value)}
@@ -278,29 +389,74 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
             <PdfView url={`/api/documents/${doc.id}/file`} notes={notes} numbers={numbers} activeNote={active} jump={jump}
               onSelect={handleSelect} onNoteClick={clickMark} onPage={onPage}
               onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }}
-              pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke }} />
+              pen={{ on: penOn, color: penColor, width: 2.5, pending, add: addStroke, erase: eraseInk }}
+              reserve={view === "margin" ? 330 : 0} renderMargin={pdfMargin} renderOverlay={pdfOverlay} />
           )}
           {doc?.status === "ready" && doc.kind !== "pdf" && (
             <TextView segments={segments} notes={notes} numbers={numbers} activeNote={active} jump={jump}
-              onSelect={handleSelect} onNoteClick={(nid) => setActive(nid)}
-              onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }} />
+              onSelect={handleSelect} onNoteClick={clickMark}
+              onContext={(s, x, y) => { setSel(s); setMenu({ x, y }); }} renderMargin={textMargin} renderOverlay={textOverlay} />
           )}
         </section>
+  );
 
-        <NotesPanel workspaceId={id} documentId={docId ?? undefined}
-          onOpenNote={(n) => { setOpenNote(n.id); if (n.document_id !== docId) setDocId(n.document_id); else { const x = notes.find((y) => y.id === n.id); if (x) jumpToNote(x); } }}
-          notes={noteList} numbers={numbers} active={active} onActive={setActive} onJump={jumpToNote} reload={loadNotes}
-          onAdd={doc?.status === "ready" ? async () => {
-            const page = doc.kind === "pdf" ? pageInfo[0] : 1;
-            const near = segments.find((x) => x.page === page);
-            const n = await api.post<Note>("/api/notes", { document_id: doc.id, page, category: "info", body: "",
-              segment_id: near?.id ?? null, location: near?.location ?? `Page ${page}` });
-            await loadNotes(); setActive(n.id);
-          } : undefined} />
-        <AssistantPanel doc={doc} workspace={ws} segments={segments} notes={notes} activeNote={active}
-          onJump={jumpToSegment} reloadNotes={loadNotes} prefill={askPrefill}
-          page={doc?.kind === "pdf" ? pageInfo[0] : 1} sectionRequest={sectionRequest} redactCount={redactCount}
-          onOpenMindMap={setMindMap} onOpenQuiz={setQuiz} />
+  return (
+    <div className="app" onClick={() => setDocMenu(false)}>
+      <header className="topbar">
+        <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
+        <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
+        <div style={{ position: "relative" }}>
+          <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
+            <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>
+          {docMenu && (
+            <div className="ctx-menu" style={{ position: "absolute", top: 40, insetInlineStart: 0 }}>
+              {docs.map((d) => <button key={d.id} onClick={() => setDocId(d.id)}>{d.filename}{d.revision_of ? " ·  rev." : ""}</button>)}
+            </div>
+          )}
+        </div>
+        <input ref={fileRef} type="file" hidden accept=".pdf,.docx,.xlsx,.xlsm,.pptx,.txt,.md,.csv"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+        <input ref={revRef} type="file" hidden accept=".pdf,.docx,.xlsx,.xlsm,.pptx,.txt,.md,.csv"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f && doc) upload(f, doc.id); e.target.value = ""; }} />
+        <button className="btn" onClick={() => fileRef.current?.click()}><IconPlus />{t("addDocument")}</button>
+        {doc && <button className="btn" onClick={() => revRef.current?.click()}>{t("addRevision")}</button>}
+        <span className="grow" />
+        {doc && <button className="btn" onClick={() => download(`/api/documents/${doc.id}/export.docx`)}><IconDownload />{t("exportWord")}</button>}
+        <button className="btn" onClick={() => download(`/api/workspaces/${id}/package`)}><IconShare />{t("sharePkg")}</button>
+        <div className="seg" role="group" aria-label={t("language")}>
+          <button className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>EN</button>
+          <button className={lang === "ar" ? "on" : ""} onClick={() => setLang("ar")}>عربي</button>
+        </div>
+        <button className="icon-btn" aria-label={t("settings")} onClick={() => go({ name: "settings", back: { name: "workspace", id } })}><IconGear /></button>
+      </header>
+
+      <main className={`ws-main view-${view}${compact ? " compact" : ""}`}>
+        {compact && view === "split" ? (
+          <div className="stack">
+            {docPane}
+            <div className="dock-handle" role="separator" aria-orientation="horizontal" aria-label={t("dockHandle")} title={t("dockHandle")}
+              onPointerDown={startDockDrag}><i /></div>
+            <div className="dock-wrap" style={{ height: `${dock * 100}%` }}>
+              {assistant("assist-pane dock", notesPanel("notes-pane in-dock"))}
+            </div>
+          </div>
+        ) : (
+          <>
+            {docPane}
+            {view === "split" && notesPanel("notes-pane")}
+            {!compact && assistant("assist-pane")}
+          </>
+        )}
+        {drawer && (
+          <>
+            <div className="drawer-back" onClick={() => setDrawer(null)} />
+            <div className="drawer" role="dialog" aria-label={drawer === "notes" ? t("notes") : t("assistant")}>
+              <div className="drawer-head"><strong>{drawer === "notes" ? t("notes") : t("assistant")}</strong><span className="grow" />
+                <button className="icon-btn" aria-label={t("close")} onClick={() => setDrawer(null)}><IconClose /></button></div>
+              {drawer === "notes" ? notesPanel("notes-pane in-drawer", true) : assistant("assist-pane in-drawer")}
+            </div>
+          </>
+        )}
       </main>
 
       <footer className="statusbar">
@@ -365,7 +521,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
                 <div className="row">
                   <button className="btn primary small grow" onClick={async () => {
                     if (!doc) return;
-                    await api.post("/api/notes", { document_id: doc.id, quote: tr.data!.text, body: `${t("translation")}: ${tr.data!.translation}`,
+                    await notesApi.create({ document_id: doc.id, quote: tr.data!.text, body: `${t("translation")}: ${tr.data!.translation}`,
                       category: "info", page: pageInfo[0] });
                     loadNotes(); setTr(null);
                   }}>{t("saveAsNote")}</button>
