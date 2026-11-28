@@ -48,12 +48,14 @@ fn main() {
             app.manage(Backend(Mutex::new(child)));
 
             let window = app.get_webview_window("main").expect("main window");
+            // the version in the address makes each update load its own interface, never a cached older one
+            let version = app.package_info().version.to_string();
             std::thread::spawn(move || {
                 let start = Instant::now();
                 while !backend_ready() && start.elapsed() < Duration::from_secs(120) {
                     std::thread::sleep(Duration::from_millis(300));
                 }
-                let url = Url::parse(&format!("http://127.0.0.1:{PORT}/")).expect("valid url");
+                let url = Url::parse(&format!("http://127.0.0.1:{PORT}/?v={version}")).expect("valid url");
                 let _ = window.navigate(url);
             });
             Ok(())

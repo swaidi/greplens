@@ -664,7 +664,10 @@ if STATIC.is_dir():
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
         file = STATIC / path
-        return FileResponse(file if path and file.is_file() else STATIC / "index.html")
+        if path and file.is_file():
+            return FileResponse(file)
+        # the page itself is never cached, so an update always shows the new interface
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store, max-age=0"})
 
 
 def run(open_browser: bool = False) -> None:
