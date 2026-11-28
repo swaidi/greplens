@@ -154,7 +154,10 @@ def _start(role: str, model_path: str, port: int) -> None:
         args += ["-c", "16384"]
     log = open(data_dir() / "logs" / f"engine-{role}.log", "ab")
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    _procs[role] = subprocess.Popen(args, stdout=log, stderr=log, creationflags=flags)
+    env = dict(os.environ)
+    if sys.platform != "win32":  # the engine's libraries sit next to it
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(filter(None, [os.path.dirname(binary), env.get("LD_LIBRARY_PATH", "")]))
+    _procs[role] = subprocess.Popen(args, stdout=log, stderr=log, creationflags=flags, env=env)
     _tie_to_backend(_procs[role])
     deadline = time.time() + 300
     while time.time() < deadline:

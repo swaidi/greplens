@@ -38,6 +38,7 @@ export function UpdateOffer({ update, onDismiss, inline = false }: { update: Upd
         </div>
       )}
       {inst && ["starting", "started"].includes(inst.status) && <span className="small">{t("updStarting")}</span>}
+      {inst && inst.status === "opened" && <span className="small">{t("updOpenedDeb")}</span>}
       {inst && inst.status === "error" && (
         <span className="small" style={{ color: "var(--danger-text)" }}>{inst.message}
           <button className="btn small" style={{ marginInlineStart: 8 }} onClick={start}>{t("retry")}</button></span>

@@ -137,7 +137,7 @@ export function OnlineConnect({ status, onConnected, initial }: { status: Online
         </div>
       </label>
       {error && <div className="error-box">{error}</div>}
-      <span className="muted small">{t("onlinePrivacy")}</span>
+      <span className="muted small">{t(navigator.userAgent.includes("Windows") ? "onlinePrivacy" : "onlinePrivacyLinux")}</span>
     </div>
   );
 }

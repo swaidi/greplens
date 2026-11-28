@@ -193,7 +193,7 @@ function HandwritingText({ note, status, error, onSave, onRead }: { note: Note; 
   const [busy, setBusy] = useState(false);
   useEffect(() => setValue(note.handwriting_text ?? ""), [note.handwriting_text]);
   const other = note.handwriting_lang === "ar" ? "en" : "ar";
-  if (status && !status.available) return <span className="muted small">{t("hwUnavailable")}</span>;
+  if (status && !status.available) return <span className="muted small">{t(navigator.userAgent.includes("Windows") ? "hwUnavailable" : "hwUnavailableLinux")}</span>;
   return (
     <div className="col" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
       <label className="row small" style={{ alignItems: "center" }}><span className="muted" style={{ whiteSpace: "nowrap" }}>{t("readsAs")}</span>

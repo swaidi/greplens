@@ -53,8 +53,14 @@ def check(force: bool = False) -> dict:
         return {"checked": False, "current": __version__,
                 "error": f"Could not reach GitHub to check for updates ({exc.__class__.__name__})."}
     latest = rel.get("tag_name", "")
-    suffixes = ("-setup.exe", ".msi") if sys.platform == "win32" else (".appimage", ".deb")
-    asset = next((a for a in rel.get("assets", []) if a["name"].lower().endswith(suffixes)), None)
+    if sys.platform == "win32":
+        suffixes = ("-setup.exe", ".msi")
+    elif os.environ.get("APPIMAGE"):  # running from an AppImage: it can replace itself
+        suffixes = (".appimage",)
+    else:  # installed from the .deb package
+        suffixes = (".deb",)
+    assets = rel.get("assets", [])
+    asset = next((a for s in suffixes for a in assets if a["name"].lower().endswith(s)), None)
     result = {"checked": True, "current": __version__, "latest": latest.lstrip("v"),
               "available": bool(latest) and _ver(latest) > _ver(__version__),
               "notes": (rel.get("body") or "")[:2000], "url": rel.get("html_url"),
@@ -92,6 +98,13 @@ def _download_and_run(asset_url: str) -> None:
                 for chunk in resp.iter_bytes(256 * 1024):
                     fh.write(chunk)
                     _install["done"] += len(chunk)
+        if sys.platform != "win32" and not os.environ.get("APPIMAGE"):
+            # a .deb needs the system's installer, which asks for the password: hand the file to it
+            subprocess.Popen(["xdg-open", str(target)], start_new_session=True)
+            _install.update(status="opened", message="The new package opened in the Software installer. Choose Install, "
+                            "enter your password, then reopen GrepLens.")
+            _log(f"install: opened {target} with the system installer")
+            return
         _install.update(status="starting", message="Starting the installer. GrepLens will close and restart.")
         from . import engine
         engine.stop()  # release the engine files before the installer replaces them
@@ -99,7 +112,7 @@ def _download_and_run(asset_url: str) -> None:
         if sys.platform == "win32":
             _run_installer_after_exit(target)
         else:
-            subprocess.Popen(["xdg-open", str(target)])
+            _replace_appimage(target)
         _install["status"] = "started"
     except Exception as exc:
         _log(f"install failed: {exc!r}")
@@ -151,3 +164,19 @@ def _run_installer_after_exit(installer: Path) -> None:
         _log(f"install: helper without job breakaway ({exc})")
         subprocess.Popen(args, creationflags=flags, **kw)
     _log(f"install: helper started for {installer} (folder {folder})")
+
+
+def _replace_appimage(new_file: Path) -> None:
+    """AppImage: put the new file in place of the running one, then close GrepLens and open the new version."""
+    current = Path(os.environ["APPIMAGE"])
+    staged = current.with_name(current.name + ".new")
+    import shutil
+    shutil.copyfile(new_file, staged)
+    os.chmod(staged, 0o755)
+    os.replace(staged, current)  # the running copy keeps working until it closes
+    shell_pid = os.getppid()
+    script = (f"sleep 1; kill {shell_pid} {os.getpid()} 2>/dev/null; sleep 2; "
+              f"nohup '{str(current).replace(chr(39), '')}' >/dev/null 2>&1 &")
+    subprocess.Popen(["sh", "-c", script], start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _log(f"install: replaced {current}, reopening")
