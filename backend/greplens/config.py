@@ -54,6 +54,8 @@ DEFAULTS = {
     "view": "split",              # split | margin | page: where notes are shown beside the document
     "models_dir": "",
     "engine": "builtin",          # builtin (bundled llama.cpp) | ollama
+    "ai_source": "local",         # local (this computer) | online (the user's own key, see online.py)
+    "online": {},
     "models": {},                 # role -> {"path": ..., "id": ..., "source": ...}
     "threads": 0,                 # 0 = physical cores
     "update_check": True,

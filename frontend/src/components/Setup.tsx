@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Key, useI18n } from "../i18n";
 import { IconCheck, Logo } from "../icons";
+import { AiSourcePicker, onlineStatus, OnlineStatus } from "./OnlineAI";
 
 type Hardware = {
   cpu: string; cores: number; threads: number; base_ghz: number | null; ram_gb: number; gpus: string[];
@@ -26,6 +27,12 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState("");
   const [scanFolder, setScanFolder] = useState("");
   const [scanMsg, setScanMsg] = useState("");
+  const [online, setOnline] = useState<OnlineStatus | null>(null);
+  useEffect(() => { onlineStatus(true).then(setOnline).catch(() => {}); }, []);
+  // with online AI only the small search model is needed here; offer the others unticked
+  useEffect(() => {
+    if (online?.source === "online" && info) setPicked(Object.fromEntries(info.manifest.map((m) => [m.id, m.role === "embed"])));
+  }, [online?.source, info, hw]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api.get<Hardware>("/api/hardware").then((h) => {
@@ -40,7 +47,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (step !== 4) return;
+    if (step !== 5) return;
     const timer = setInterval(() => api.get<Progress>("/api/models/progress").then(setProgress), 1000);
     return () => clearInterval(timer);
   }, [step]);
@@ -71,12 +78,13 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     try {
       await api.patch("/api/settings", { models_dir: folder.trim() }); // remember the folder even when nothing downloads
       if (toDownload.length) setProgress(await api.post<Progress>("/api/models/download", { ids: toDownload.map((m) => m.id), folder }));
-      setStep(4);
+      setStep(5);
     } catch (e) { setError(String(e)); }
   };
   const finish = async () => { await api.patch("/api/settings", { setup_complete: true }); onDone(); };
   const status = (s: string) => ({ rec: ["ok", t("rec")], slow: ["warn", t("slow")], no: ["high", t("no")] } as Record<string, string[]>)[s];
-  const steps: Key[] = ["deviceCheck", "models", "storage", "downloadStep"];
+  const steps: Key[] = ["deviceCheck", "aiStep", "models", "storage", "downloadStep"];
+  const recommendOnline = !!hw && hw.recommendation.features.some((f) => f.status !== "rec");
   const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 
   return (
@@ -129,7 +137,19 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             </>
           )}
 
-          {step === 2 && info && (
+          {step === 2 && (
+            <>
+              <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("whereAiRuns")}</h1><p className="muted" style={{ margin: 0 }}>{t("whereAiRunsHint")}</p></div>
+              <AiSourcePicker status={online} recommendOnline={recommendOnline} onChange={(st) => {
+                setOnline(st);
+                if (st.source === "online" && info) { // online: only the small search model is needed on this computer
+                  setPicked(Object.fromEntries(info.manifest.map((m) => [m.id, m.role === "embed"])));
+                } else if (hw) setPicked(Object.fromEntries(hw.recommendation.models.map((m) => [m, true])));
+              }} />
+            </>
+          )}
+
+          {step === 3 && info && (
             <>
               <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("chooseModels")}</h1><p className="muted" style={{ margin: 0 }}>{t("chooseModelsHint")}</p></div>
               <div className="card col" style={{ background: "var(--soft2)" }}>
@@ -158,11 +178,12 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                   <strong>{reused[m.id] ? t("reused") : `≈ ${m.size_gb} GB`}</strong>
                 </button>
               ))}
+              {online?.source === "online" && <div className="note-box small">{t("onlineModelsNote")}</div>}
               <span className="muted small">{t("totalDownload", { g: totalGb.toFixed(1) })}</span>
             </>
           )}
 
-          {step === 3 && (
+          {step === 4 && (
             <>
               <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("whereToSave")}</h1><p className="muted" style={{ margin: 0 }}>{t("whereHint")}</p></div>
               <label className="col"><strong>{t("modelsFolder")}</strong>
@@ -179,7 +200,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             </>
           )}
 
-          {step === 4 && (
+          {step === 5 && (
             <>
               <div><h1 style={{ fontSize: 24, marginBottom: 4 }}>{t("downloading")}</h1><p className="muted" style={{ margin: 0 }}>{t("downloadHint")}</p></div>
               {chosen.map((m) => {
@@ -204,9 +225,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
           <div className="row" style={{ marginTop: "auto", justifyContent: "space-between", paddingTop: 16, borderTop: "1px solid var(--line2)" }}>
             <button className="btn big" disabled={step === 1} onClick={() => setStep(step - 1)}>{t("back")}</button>
-            {step < 3 && <button className="btn big primary" onClick={() => setStep(step + 1)}>{step === 1 ? t("accept") : t("next")}</button>}
-            {step === 3 && <button className="btn big primary" disabled={!folder.trim() && toDownload.length > 0} onClick={startDownload}>{t("startDownload")}</button>}
-            {step === 4 && <button className="btn big primary" disabled={!allDone} onClick={finish}>{t("finish")}</button>}
+            {step < 4 && <button className="btn big primary" onClick={() => setStep(step + 1)}>{step === 1 ? t("accept") : t("next")}</button>}
+            {step === 4 && <button className="btn big primary" disabled={!folder.trim() && toDownload.length > 0} onClick={startDownload}>{t("startDownload")}</button>}
+            {step === 5 && <button className="btn big primary" disabled={!allDone} onClick={finish}>{t("finish")}</button>}
           </div>
         </section>
       </div>

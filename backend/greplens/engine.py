@@ -19,7 +19,7 @@ import time
 import httpx
 import psutil
 
-from .config import data_dir, load_settings, resources_dir
+from .config import data_dir, load_settings, resources_dir, save_settings
 
 PORTS = {"fast": 8711, "review": 8712, "embed": 8713}
 OLLAMA_URL = "http://127.0.0.1:11434"
@@ -76,10 +76,30 @@ class EngineError(RuntimeError):
     pass
 
 
+def native_arm64() -> bool:
+    """True on Windows on ARM (e.g. Snapdragon), even when GrepLens itself runs as an x64 app under emulation."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        process, native = ctypes.c_ushort(), ctypes.c_ushort()
+        k32 = ctypes.windll.kernel32
+        if k32.IsWow64Process2(k32.GetCurrentProcess(), ctypes.byref(process), ctypes.byref(native)):
+            return native.value == 0xAA64  # IMAGE_FILE_MACHINE_ARM64
+    except (AttributeError, OSError):
+        pass
+    return False
+
+
+def _arm_failed() -> bool:
+    return bool(load_settings().get("arm64_engine_failed"))
+
+
 def server_binary() -> str | None:
     exe = "llama-server.exe" if sys.platform == "win32" else "llama-server"
-    for candidate in (os.environ.get("GREPLENS_LLAMA_SERVER", ""), str(resources_dir() / "engine" / exe),
-                      str(resources_dir().parent / "engine" / exe)):
+    folders = ["engine-arm64", "engine"] if native_arm64() and not _arm_failed() else ["engine"]
+    bundled = [str(base / f / exe) for f in folders for base in (resources_dir(), resources_dir().parent)]
+    for candidate in (os.environ.get("GREPLENS_LLAMA_SERVER", ""), *bundled):
         if candidate and os.path.isfile(candidate):
             return candidate
     return shutil.which("llama-server")
@@ -139,6 +159,10 @@ def _start(role: str, model_path: str, port: int) -> None:
     deadline = time.time() + 300
     while time.time() < deadline:
         if _procs[role].poll() is not None:
+            if "engine-arm64" in binary and not _arm_failed():
+                # the native ARM engine could not start here: use the standard engine from now on
+                save_settings({"arm64_engine_failed": True})
+                return _start(role, model_path, port)
             raise EngineError(f"The AI engine stopped while loading the {role} model. See logs/engine-{role}.log.")
         if _alive(port):
             return
@@ -159,7 +183,7 @@ def stop(role: str | None = None) -> None:
 
 def status() -> dict:
     return {role: bool(_procs.get(role) and _procs[role].poll() is None) for role in PORTS} | {
-        "binary": bool(server_binary())}
+        "binary": bool(server_binary()), "native_arm64": bool(server_binary() and "engine-arm64" in server_binary())}
 
 
 atexit.register(stop)

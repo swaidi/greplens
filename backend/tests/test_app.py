@@ -418,3 +418,95 @@ def test_sticky_note_and_pen_setting(client, pdf_doc):
         texts = [a.info.get("content", "") for a in pdf[0].annots()]
     assert any("Sticky here" in t for t in texts)
     assert client.patch("/api/settings", json={"pen_mode": "highlight"}).json()["pen_mode"] == "highlight"
+
+
+def test_online_ai_connect_route_and_keep_local(client, workspace, pdf_doc, monkeypatch):
+    from greplens import online
+    store = {}
+    monkeypatch.setattr("greplens.keystore.get", lambda name: store.get(name))
+    monkeypatch.setattr("greplens.keystore.put", lambda name, value: store.__setitem__(name, value))
+    monkeypatch.setattr("greplens.keystore.delete", lambda name: store.pop(name, None))
+    assert online.detect("sk-ant-api03-x") == "anthropic" and online.detect("AIzaXYZ") == "gemini"
+    assert online.detect("sk-or-v1-x") == "openrouter" and online.detect("sk-proj-x") == "openai"
+    bad = client.post("/api/ai/online/connect", json={"key": "hello"})
+    assert bad.status_code == 422 and "doesn't look like a key" in bad.json()["detail"]
+    wrong = client.post("/api/ai/online/connect", json={"key": "sk-ant-api03-abc", "provider": "gemini"})
+    assert wrong.status_code == 422 and "This key is for Claude" in wrong.json()["detail"]
+    st = client.post("/api/ai/online/connect", json={"key": " sk-ant-api03-abcdefghijk "}).json()
+    assert st["provider"] == "anthropic" and st["source"] == "online" and st["key_hint"].startswith("sk-ant-")
+    assert "abcdefghijk" not in str(client.get("/api/settings").json())  # the key is never in the settings file
+    # questions go online, and usage is counted
+    client.post(f"/api/documents/{pdf_doc['id']}/ask", json={"question": "What is the contract value?"})
+    assert client.get("/api/ai/online").json()["usage"]["requests"] >= 1
+    # a workspace kept on this computer never goes online
+    before = client.get("/api/ai/online").json()["usage"]["requests"]
+    client.patch(f"/api/workspaces/{workspace['id']}", json={"local_only": 1})
+    client.post(f"/api/documents/{pdf_doc['id']}/ask", json={"question": "What is the advance payment?"})
+    assert client.get("/api/ai/online").json()["usage"]["requests"] == before
+    assert client.post("/api/ai/source", json={"source": "local"}).json()["source"] == "local"
+    assert client.post("/api/open-url", json={"url": "https://example.com"}).status_code == 400
+    assert client.post("/api/ai/online/disconnect").json()["provider"] is None
+    assert client.post("/api/ai/source", json={"source": "online"}).status_code == 409
+
+
+def test_online_model_choice():
+    from greplens.online import _choose
+    ant = _choose("anthropic", ["claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"])
+    assert ant == {"fast": "claude-haiku-5-5", "review": "claude-sonnet-5-5"}
+    oai = _choose("openai", ["gpt-4o", "gpt-5", "gpt-5-mini", "gpt-5.5", "gpt-5.5-mini", "gpt-5.5-nano", "gpt-5.5-pro",
+                             "gpt-realtime", "gpt-5-codex", "gpt-image-1"])
+    assert oai == {"fast": "gpt-5.5-mini", "review": "gpt-5.5"}
+    gem = _choose("gemini", ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-3-flash", "gemini-3-pro-preview",
+                             "gemini-3-flash-lite", "gemini-embedding-001", "gemini-2.5-pro"])
+    assert gem == {"fast": "gemini-3-flash", "review": "gemini-3-pro-preview"}
+    orr = _choose("openrouter", ["anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "google/gemini-3-flash"])
+    assert orr == {"fast": "anthropic/claude-haiku-5.5", "review": "anthropic/claude-sonnet-5.5"}
+
+
+def test_online_requests_adapt_and_explain(monkeypatch):
+    import httpx
+    from greplens import online
+    sent = []
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.append((url, dict(json)))
+        if "anthropic" in url:
+            assert headers["x-api-key"] == "k" and json["system"].startswith("Be brief")
+            return httpx.Response(200, json={"content": [{"type": "text", "text": "Hello"}], "usage": {"input_tokens": 5, "output_tokens": 2}})
+        if "temperature" in json and "gpt-9" in json["model"]:
+            return httpx.Response(400, json={"error": {"message": "Unsupported parameter: 'temperature' is not supported with this model."}})
+        if "credit" in json["model"]:
+            return httpx.Response(429, json={"error": {"message": "You exceeded your current quota, please check your plan and billing details."}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Hi"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 1}})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    msgs = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"}]
+    assert online._send("anthropic", "k", "claude-haiku-5-5", msgs, max_tokens=50, temperature=0.2)[0] == "Hello"
+    assert online._send("openai", "k", "gpt-9-mini", msgs, max_tokens=50, temperature=0.2)[0] == "Hi"
+    assert "temperature" not in sent[-1][1] and len(sent) == 3  # retried once without the setting
+    try:
+        online._send("openrouter", "k", "credit-test", msgs, max_tokens=50, temperature=0.2)
+        raise AssertionError("expected an error")
+    except online.OnlineError as exc:
+        assert "no credit" in str(exc)
+
+
+def test_models_found_after_skipping_setup(client, tmp_path):
+    from greplens import models
+    from greplens.config import save_settings
+    folder = tmp_path / "Models"
+    folder.mkdir()
+    (folder / "Qwen_Qwen3-8B-Q4_K_M.gguf").write_bytes(b"\0" * (400 * 1024 * 1024 // 1024))  # small stand-in
+    (folder / "bge-m3-Q8_0.gguf.part").write_bytes(b"\0" * 1024)
+    save_settings({"models_dir": str(folder), "models": {}})
+    import greplens.models as m
+    orig = m.detect_existing
+    m.detect_existing = lambda: [dict(c, size_gb=4.7) for c in orig()]
+    try:
+        info = client.get("/api/models").json()
+    finally:
+        m.detect_existing = orig
+    assert info["installed"]["fast"]["id"] == "qwen3-8b" and info["installed"]["fast"]["source"] == "found"
+    assert [u["model_id"] for u in info["unfinished"]] == ["bge-m3"]
+    assert info["default_folder"] == str(folder)
+    save_settings({"models_dir": "", "models": {}})

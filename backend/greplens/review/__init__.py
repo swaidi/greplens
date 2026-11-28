@@ -225,6 +225,9 @@ def start(document_id: str, config: dict) -> dict:
 
 def _launch(review_id: str, document_id: str) -> None:
     def run():
+        from .. import online
+        doc = db.get("documents", document_id)
+        online.set_workspace(doc["workspace_id"] if doc else None)
         try:
             GRAPH.invoke({"review_id": review_id, "document_id": document_id}, {"recursion_limit": 100_000})
             if db.get("reviews", review_id)["status"] == "pausing":

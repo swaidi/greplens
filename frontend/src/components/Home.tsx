@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, appVersion, Profile, Workspace } from "../api";
 import { useI18n } from "../i18n";
 import { IconDownload, IconGear, Logo } from "../icons";
+import { OnlineProblem } from "./OnlineAI";
 import type { View } from "../App";
 
 export type Update = { checked?: boolean; available?: boolean; latest?: string; asset?: string | null; error?: string; current?: string };
@@ -106,6 +107,7 @@ export default function Home({ go }: { go: (v: View) => void }) {
         <span className="grow" />
         <button className="icon-btn" aria-label={t("settings")} onClick={() => go({ name: "settings" })}><IconGear /></button>
       </header>
+      <OnlineProblem />
       <UpdateBanner />
       <main className="page">
         <div className="row wrap" style={{ alignItems: "flex-end", gap: 12 }}>

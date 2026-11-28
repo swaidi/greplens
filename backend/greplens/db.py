@@ -12,7 +12,7 @@ from .config import data_dir
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, categories TEXT NOT NULL DEFAULT '[]',
-  created REAL, updated REAL);
+  local_only INTEGER DEFAULT 0, created REAL, updated REAL);
 CREATE TABLE IF NOT EXISTS documents (
   id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, filename TEXT NOT NULL, kind TEXT NOT NULL,
   sha256 TEXT, pages INTEGER DEFAULT 0, ocr_pages INTEGER DEFAULT 0, status TEXT DEFAULT 'queued',
@@ -65,7 +65,7 @@ def connect():
 
 MIGRATIONS = [("notes", "ink", "TEXT DEFAULT '[]'"), ("notes", "handwriting", "TEXT DEFAULT '[]'"),
               ("notes", "handwriting_text", "TEXT DEFAULT ''"), ("notes", "handwriting_lang", "TEXT DEFAULT ''"),
-              ("notes", "sticky", "TEXT DEFAULT 'null'")]
+              ("notes", "sticky", "TEXT DEFAULT 'null'"), ("workspaces", "local_only", "INTEGER DEFAULT 0")]
 
 
 def init() -> None:

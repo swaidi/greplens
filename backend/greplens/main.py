@@ -16,13 +16,17 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, db, engine, jobs, tools, export_docx, handwriting, hardware, ingest, models, package, profiles, qa, review, translate, updates
+from . import __version__, db, engine, jobs, tools, export_docx, handwriting, hardware, online, ingest, models, package, profiles, qa, review, translate, updates
 from .config import API_PORT, load_settings, save_settings
 
 @asynccontextmanager
 async def lifespan(_app):
     db.init()
     jobs.init()
+    try:
+        models.auto_register()  # files already on the computer, e.g. when the setup models step was skipped
+    except Exception:  # noqa: BLE001 - never block start-up
+        pass
     for doc in db.query("SELECT id FROM documents WHERE status NOT IN ('ready', 'error')"):
         ingest.enqueue(doc["id"])  # finish imports interrupted by closing the app
     review.resume_interrupted()
@@ -38,6 +42,11 @@ app = FastAPI(title="GrepLens", version=__version__, lifespan=lifespan)
 @app.exception_handler(engine.EngineError)
 def _engine_error(_req, exc):
     return JSONResponse({"detail": str(exc), "code": "engine"}, status_code=503)
+
+
+@app.exception_handler(online.OnlineError)
+def _online_error(_req, exc):
+    return JSONResponse({"detail": str(exc), "code": "online"}, status_code=503)
 
 
 def _must(table: str, row_id: str) -> dict:
@@ -78,8 +87,17 @@ def get_hardware():
 
 @app.get("/api/models")
 def get_models():
+    models.auto_register()
     return {"manifest": models.manifest(), "installed": models.installed(), "existing": models.detect_existing(),
+            "unfinished": models.unfinished(), "default_folder": str(models.default_folder()),
             "engine": engine.status(), "updates": models.updates_available()}
+
+
+@app.post("/api/models/download-search-model")
+def download_search_model():
+    """The one-click "Download it" for documents waiting for the search model."""
+    embed = next(m for m in models.manifest() if m["role"] == "embed")
+    return models.start_downloads([embed["id"]], str(models.default_folder()))
 
 
 class DownloadBody(BaseModel):
@@ -178,7 +196,7 @@ def create_workspace(body: WorkspaceBody):
 @app.patch("/api/workspaces/{ws_id}")
 def update_workspace(ws_id: str, body: dict):
     _must("workspaces", ws_id)
-    db.update("workspaces", ws_id, {k: v for k, v in body.items() if k in ("name", "categories")} | {"updated": db.now()})
+    db.update("workspaces", ws_id, {k: v for k, v in body.items() if k in ("name", "categories", "local_only")} | {"updated": db.now()})
     return db.get("workspaces", ws_id)
 
 
@@ -337,6 +355,53 @@ def read_handwriting(note_id: str, body: dict):
     return db.get("notes", note_id)
 
 
+@app.get("/api/ai/online")
+def online_status():
+    return online.status()
+
+
+@app.post("/api/ai/online/connect")
+def online_connect(body: dict):
+    try:
+        return online.connect(str(body.get("key", "")), body.get("provider"))
+    except online.OnlineError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/ai/online/disconnect")
+def online_disconnect():
+    return online.disconnect()
+
+
+@app.patch("/api/ai/online/models")
+def online_models(body: dict):
+    return online.set_models(body)
+
+
+@app.post("/api/ai/source")
+def ai_source(body: dict):
+    """Where the AI runs: "local" (this computer) or "online" (needs a connected key)."""
+    source = body.get("source")
+    if source not in ("local", "online"):
+        raise HTTPException(400, "source must be local or online")
+    if source == "online" and not online.status()["provider"]:
+        raise HTTPException(409, "Connect an online service first.")
+    save_settings({"ai_source": source})
+    online.last_error.clear()
+    return online.status()
+
+
+@app.post("/api/open-url")
+def open_url(body: dict):
+    """Open a service's key or billing page in the user's browser."""
+    url = str(body.get("url", ""))
+    if url not in online.ALLOWED_URLS:
+        raise HTTPException(400, "This address can't be opened from GrepLens.")
+    import webbrowser
+    webbrowser.open(url)
+    return {"ok": True}
+
+
 @app.get("/api/handwriting/status")
 def handwriting_status():
     return handwriting.status()
@@ -435,10 +500,13 @@ def resume_review(review_id: str):
 class TranslateBody(BaseModel):
     text: str
     context: str = ""
+    document_id: str | None = None
 
 
 @app.post("/api/translate")
 def do_translate(body: TranslateBody):
+    doc = db.get("documents", body.document_id) if body.document_id else None
+    online.set_workspace(doc["workspace_id"] if doc else None)
     return translate.translate(body.text[:500], body.context)
 
 

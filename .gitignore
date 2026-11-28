@@ -23,3 +23,5 @@ src-tauri/resources/tessdata/*
 Models/
 *.gguf
 *.gguf.part
+src-tauri/resources/engine-arm64/*
+!src-tauri/resources/engine-arm64/.gitkeep

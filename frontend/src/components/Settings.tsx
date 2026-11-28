@@ -6,19 +6,44 @@ import type { View } from "../App";
 import type { Existing } from "./Setup";
 import { applyTheme, Theme } from "../theme";
 import { Update, UpdateOffer } from "./Home";
+import { OnlineSettings } from "./OnlineAI";
 
 type Hardware = { cpu: string; cores: number; ram_gb: number; dedicated_gpu: string | null; gpus: string[]; measured: Record<string, number> };
 type ModelsInfo = { installed: Record<string, { name: string; path: string; source: string; id?: string }>; existing: Existing[];
-  updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean> };
+  updates: { role: string; new: string; size_gb: number; id: string }[]; engine: Record<string, boolean>;
+  manifest: { id: string; role: string; name: string; size_gb: number }[]; default_folder: string;
+  unfinished: { model_id: string; name: string; folder: string; done_gb: number }[] };
+type DlProgress = { items: Record<string, { status: string; done_bytes: number; total: number; message: string }> };
 type Settings = { theme?: Theme; view?: "split" | "margin" | "page"; language: string; update_check: boolean; author: string; models_dir: string; engine: string };
 type Term = { id: string; en: string; ar: string };
-const SECTIONS: Key[] = ["deviceModels", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
+const SECTIONS: Key[] = ["aiService", "deviceModels", "appearance", "language", "reviewCategories", "glossary", "updates", "about"];
 const roleOf = (e: Existing) => (e as Existing & { role?: string }).role ?? "";
 const ROLE: Record<string, Key> = { fast: "feat_qa", review: "feat_review", embed: "feat_search" };
 
 export default function SettingsView({ go, back }: { go: (v: View) => void; back: View }) {
   const { t, lang, setLang } = useI18n();
-  const [section, setSection] = useState<Key>("deviceModels");
+  const [section, setSection] = useState<Key>("aiService");
+  const [dl, setDl] = useState<DlProgress | null>(null);
+  const downloading = !!dl && Object.values(dl.items).some((x) => ["queued", "downloading", "verifying"].includes(x.status));
+  useEffect(() => {
+    if (!downloading) return;
+    const timer = setInterval(async () => {
+      const p = await api.get<DlProgress>("/api/models/progress");
+      setDl(p);
+      if (!Object.values(p.items).some((x) => ["queued", "downloading", "verifying"].includes(x.status))) api.get<ModelsInfo>("/api/models").then(setModels);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [downloading]);
+  const download = async (id: string, folder?: string) => {
+    setDl(await api.post<DlProgress>("/api/models/download", { ids: [id], folder: folder ?? models?.default_folder ?? "" }));
+  };
+  const dlLabel = (id: string) => {
+    const st = dl?.items[id];
+    if (!st) return null;
+    if (st.status === "downloading" && st.total) return `${Math.floor((st.done_bytes / st.total) * 100)}%`;
+    if (st.status === "error") return st.message;
+    return t((({ done: "verified", queued: "queued", verifying: "verifying", paused: "paused" } as Record<string, Key>)[st.status]) ?? "queued");
+  };
   const [settings, setSettings] = useState<Settings | null>(null);
   const [hw, setHw] = useState<Hardware | null>(null);
   const [models, setModels] = useState<ModelsInfo | null>(null);
@@ -55,12 +80,14 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
           {SECTIONS.map((s) => <button key={s} className={section === s ? "on" : ""} onClick={() => setSection(s)}>{t(s)}</button>)}
         </nav>
         <section className="card col" style={{ flex: "999 1 560px", minWidth: 0, padding: "24px 26px", gap: 16 }}>
-          <h2 style={{ fontSize: 20 }}>{t(section)}</h2>
+          {section !== "aiService" && <h2 style={{ fontSize: 20 }}>{t(section)}</h2>}
+          {section === "aiService" && <OnlineSettings />}
 
           {section === "deviceModels" && hw && models && (
             <>
               <div className="grid3">
-                <div className="card"><div className="muted small">{t("processor")}</div><strong>{hw.cpu}</strong></div>
+                <div className="card"><div className="muted small">{t("processor")}</div><strong>{hw.cpu}</strong>
+                  {models.engine.native_arm64 && <div className="muted small">{t("armNative")}</div>}</div>
                 <div className="card"><div className="muted small">{t("memory")}</div><strong>{hw.ram_gb} GB</strong></div>
                 <div className="card"><div className="muted small">{t("graphics")}</div><strong>{hw.dedicated_gpu ?? t("noneDetected")}</strong></div>
               </div>
@@ -72,10 +99,27 @@ export default function SettingsView({ go, back }: { go: (v: View) => void; back
                       <span className="muted small">{t(ROLE[role])} {m ? `· ${m.source}` : ""}</span>
                       {m && <span className="muted small" dir="ltr">{m.path}</span>}</span>
                     <span className="small">{hw.measured[role] ? `${t("measured")}: ${hw.measured[role]} ${t("wordsPerSec")}` : ""}</span>
-                    <span className={`pill ${m ? "ok" : "warn"}`}>{m ? t("installed") : t("notInstalled")}</span>
+                    <span className="row">
+                      <span className={`pill ${m ? "ok" : "warn"}`}>{m ? t("installed") : t("notInstalled")}</span>
+                      {!m && (() => {
+                        const rec = models.manifest.find((x) => x.role === role);
+                        if (!rec) return null;
+                        const label = dlLabel(rec.id);
+                        return label ? <span className="small">{rec.name}: {label}</span>
+                          : <button className="btn small primary" onClick={() => download(rec.id)}>{t("downloadModel", { n: rec.name, g: rec.size_gb })}</button>;
+                      })()}
+                    </span>
                   </div>
                 );
               })}
+              {models.unfinished.map((u) => (
+                <div key={u.model_id} className="card row wrap" style={{ justifyContent: "space-between", background: "var(--warn-bg, var(--soft2))" }}>
+                  <span className="col" style={{ gap: 0 }}><strong>{t("unfinishedDownload", { n: u.name })}</strong>
+                    <span className="muted small" dir="ltr">{u.folder} · {u.done_gb} GB</span></span>
+                  {dlLabel(u.model_id) ? <span className="small">{dlLabel(u.model_id)}</span>
+                    : <button className="btn primary" onClick={() => download(u.model_id, u.folder)}>{t("continueDownload")}</button>}
+                </div>
+              ))}
               <div className="card col" style={{ background: "var(--soft2)" }}>
                 <strong>{t("haveFiles")}</strong>
                 <span className="muted small">{t("modelFilesHint")} {t("haveFilesHint")}</span>

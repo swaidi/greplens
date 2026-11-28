@@ -29,6 +29,8 @@ def ask(document_id: str, question: str, mode: str = "category", categories: lis
     doc = db.get("documents", document_id)
     if not doc:
         raise KeyError("document not found")
+    from . import online
+    online.set_workspace(doc["workspace_id"])
     history = db.query("SELECT role, content, meta FROM chats WHERE document_id = ? ORDER BY created DESC LIMIT 6",
                        (document_id,))[::-1]
     asked = db.insert("chats", {"document_id": document_id, "role": "user", "content": question, "meta": {"pending": True},

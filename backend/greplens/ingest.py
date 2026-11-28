@@ -106,6 +106,13 @@ def process(doc_id: str) -> None:
              "article": s.article, "clause": s.clause, "paragraph": s.paragraph, "location": s.location,
              "text": s.text, "bbox": s.bbox} for i, s in enumerate(segments)]
     db.insert_many("segments", rows)
+    from .config import FAKE_AI
+    from . import models
+    if not FAKE_AI and not models.auto_register().get("embed"):
+        # no search model yet: say so plainly and wait; indexing starts by itself once it is downloaded
+        _set(doc_id, "needs_model", 0.55, "The document search model (BGE-M3) is needed to index this document.",
+             pages=pages, ocr_pages=ocr_pages)
+        return
     _set(doc_id, "index", 0.55, "Indexing", pages=pages, ocr_pages=ocr_pages)
     index.delete_document(doc["workspace_id"], doc_id)
     index.index_document(doc["workspace_id"], doc_id, rows,

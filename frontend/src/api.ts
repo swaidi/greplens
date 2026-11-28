@@ -1,5 +1,5 @@
 export type Workspace = {
-  id: string; name: string; categories: string[]; created: number; updated: number;
+  id: string; name: string; categories: string[]; created: number; updated: number; local_only?: number;
   documents?: number | Doc[]; notes?: number; findings?: number; authors?: number;
 };
 export type Doc = {

@@ -73,6 +73,25 @@ jobs:
             Where-Object { $_.Name -eq "llama-server.exe" -or $_.Extension -eq ".dll" } | Copy-Item -Destination $dest
           if (-not (Test-Path "$dest/llama-server.exe")) { throw "llama-server.exe was not found in $($asset.name)" }
           "llama.cpp $($rel.tag_name)" | Out-File "$dest/VERSION.txt"
+          # Snapdragon and other ARM laptops: a native engine, used automatically there (the AI is the slow part)
+          $arm = $rel.assets | Where-Object { $_.name -match "win.*cpu.*arm64.*\.zip$" } | Select-Object -First 1
+          if (-not $arm) {
+            foreach ($r in $releases) {
+              $arm = $r.assets | Where-Object { $_.name -match "win.*cpu.*arm64.*\.zip$" } | Select-Object -First 1
+              if ($arm) { break }
+            }
+          }
+          if ($arm) {
+            "Using $($arm.name) for ARM laptops"
+            Invoke-WebRequest $arm.browser_download_url -OutFile engine-arm.zip
+            Expand-Archive engine-arm.zip -DestinationPath engine-arm-tmp
+            $armDest = "src-tauri/resources/engine-arm64"
+            Get-ChildItem engine-arm-tmp -Recurse -File |
+              Where-Object { $_.Name -eq "llama-server.exe" -or $_.Extension -eq ".dll" } | Copy-Item -Destination $armDest
+            "llama.cpp $($rel.tag_name) arm64" | Out-File "$armDest/VERSION.txt"
+          } else {
+            "::warning::No llama.cpp Windows ARM64 build found; ARM laptops will use the x64 engine"
+          }
 
       - name: Bundle OCR language data (English and Arabic)
         shell: pwsh

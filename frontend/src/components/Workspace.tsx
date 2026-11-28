@@ -10,6 +10,8 @@ import NotesPanel, { NoteCard, NoteChip } from "./NotesPanel";
 import { MarginRail } from "./Margin";
 import { history, notesApi } from "../undo";
 import { useTapGestures } from "../gestures";
+import { NeedsSearchModel } from "./ModelPrompt";
+import { onlineStatus, OnlineProblem, OnlineStatus } from "./OnlineAI";
 import AssistantPanel from "./AssistantPanel";
 import { MindMapView, MindNode, Question, QuizView } from "./Tools";
 
@@ -25,6 +27,8 @@ const COLORS = ["yellow", "green", "blue", "pink", "orange"];
 export default function WorkspaceView({ id, go }: { id: string; go: (v: View) => void }) {
   const { t, lang, setLang } = useI18n();
   const [ws, setWs] = useState<Workspace | null>(null);
+  const [online, setOnline] = useState<OnlineStatus | null>(null);
+  useEffect(() => { onlineStatus(true).then(setOnline).catch(() => {}); }, []);
   const [docs, setDocs] = useState<Doc[]>([]);
   const [docId, setDocId] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
@@ -222,7 +226,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
     const seg = segmentFor(s);
     setTr({ x: s.x, y: s.y, data: null });
     try {
-      const data = await api.post<Translation>("/api/translate", { text: s.quote, context: seg?.text ?? "" });
+      const data = await api.post<Translation>("/api/translate", { text: s.quote, context: seg?.text ?? "", document_id: doc?.id });
       setTr({ x: s.x, y: s.y, data });
     } catch (e) { setTr({ x: s.x, y: s.y, data: null, error: String(e) }); }
   };
@@ -435,7 +439,8 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
             </div>
           )}
           {!doc && <div className="card muted" style={{ maxWidth: 560, marginTop: 40 }}>{t("noDocuments")}</div>}
-          {doc && doc.status !== "ready" && (
+          {doc?.status === "needs_model" && <NeedsSearchModel onReady={loadWs} />}
+          {doc && doc.status !== "ready" && doc.status !== "needs_model" && (
             <div className="card col" style={{ width: "100%", maxWidth: 560, marginTop: 40 }}>
               <strong>{doc.status === "error" ? t("error") : t("preparing")}</strong>
               {doc.status !== "error" && <div className="bar"><div style={{ width: `${doc.progress * 100}%` }} /></div>}
@@ -463,6 +468,14 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
       <header className="topbar">
         <button className="brand" onClick={() => go({ name: "home" })} aria-label={t("home")}><Logo />GrepLens</button>
         <strong title={t("workspace")} style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ws?.name}</strong>
+        {online?.source === "online" && ws && (
+          <button className={`btn ${ws.local_only ? "soft" : ""} lock-btn`} aria-pressed={!!ws.local_only}
+            title={ws.local_only ? t("keptLocalHint") : t("goesOnlineHint", { s: online.provider_name ?? "" })}
+            onClick={async () => setWs({ ...ws, ...(await api.patch<Workspace>(`/api/workspaces/${ws.id}`, { local_only: ws.local_only ? 0 : 1 })) })}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <rect x="5" y="11" width="14" height="10" rx="2" />{ws.local_only ? <path d="M8 11V7a4 4 0 0 1 8 0v4" /> : <path d="M8 11V7a4 4 0 0 1 7.5-2" />}</svg>
+            {ws.local_only ? t("keptLocal") : t("usesOnline", { s: online.provider_name ?? "" })}</button>
+        )}
         <div style={{ position: "relative" }}>
           <button className="btn soft" onClick={(e) => { e.stopPropagation(); setDocMenu(!docMenu); }} disabled={!docs.length}>
             <IconDoc />{doc?.filename ?? t("noDocuments").split(".")[0]}<IconChevron /></button>
@@ -487,6 +500,7 @@ export default function WorkspaceView({ id, go }: { id: string; go: (v: View) =>
         </div>
         <button className="icon-btn" aria-label={t("settings")} onClick={() => go({ name: "settings", back: { name: "workspace", id } })}><IconGear /></button>
       </header>
+      <OnlineProblem />
 
       <main className={`ws-main view-${view}${compact ? " compact" : ""}`}>
         {compact && view === "split" ? (

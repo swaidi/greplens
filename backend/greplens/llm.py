@@ -9,7 +9,7 @@ from typing import Callable
 
 import httpx
 
-from . import engine
+from . import engine, online
 from .config import FAKE_AI
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.S)
@@ -18,7 +18,13 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 def chat(role: str, messages: list[dict], *, max_tokens: int = 900, temperature: float = 0.2,
          json_mode: bool = False, fake: Callable[[], str] | None = None) -> str:
     if FAKE_AI:
+        if online.target(role):
+            online._record("fake-" + role, 100, 20)
         return fake() if fake else "OK"
+    t = online.target(role)
+    if t:  # the user's online service (never for workspaces kept on this computer)
+        text = online.chat(t, role, messages, max_tokens=max_tokens, temperature=temperature, json_mode=json_mode)
+        return THINK_RE.sub("", text).strip()
     base, model = engine.endpoint(role)
     messages = [dict(m) for m in messages]
     if messages and messages[-1]["role"] == "user":

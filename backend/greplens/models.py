@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -81,9 +82,8 @@ def _gguf_files() -> list[dict]:
     home = Path.home()
     roots = [home / ".lmstudio" / "models", home / ".cache" / "lm-studio" / "models",
              home / ".cache" / "huggingface" / "hub"]
-    if load_settings().get("models_dir"):
-        roots.append(Path(load_settings()["models_dir"]))
-    found = []
+    roots += model_folders()
+    found, seen = [], set()
     for root in roots:
         if not root.exists():
             continue
@@ -94,8 +94,68 @@ def _gguf_files() -> list[dict]:
                 size = path.stat().st_size
             except OSError:
                 continue
+            if str(path).lower() in seen:
+                continue
+            seen.add(str(path).lower())
             found.append({"path": str(path), "label": path.name, "source": source, "size_gb": round(size / 1024 ** 3, 1)})
     return found
+
+
+def default_folder() -> Path:
+    """Where models go when the user hasn't chosen: D:\\GrepLens\\Models if there is a D drive, else C."""
+    if load_settings().get("models_dir"):
+        return Path(load_settings()["models_dir"])
+    if sys.platform == "win32":
+        return Path("D:/GrepLens/Models") if Path("D:/").exists() else Path("C:/GrepLens/Models")
+    return Path.home() / "GrepLens" / "models"
+
+
+def model_folders() -> list[Path]:
+    """The chosen models folder, plus the usual GrepLens\\Models folder on every drive."""
+    roots = []
+    if load_settings().get("models_dir"):
+        roots.append(Path(load_settings()["models_dir"]))
+    if sys.platform == "win32":
+        for letter in "CDEFG":
+            roots.append(Path(f"{letter}:/GrepLens/Models"))
+    else:
+        roots.append(Path.home() / "GrepLens" / "models")
+    return roots
+
+
+def auto_register() -> dict:
+    """Use finished model files already on the computer for any job that has no model yet (e.g. after skipping setup)."""
+    current = installed()
+    missing = [r for r in ("fast", "review", "embed") if not current.get(r)]
+    if not missing:
+        return current
+    files = [c for c in detect_existing() if c["source"] == "Models folder"]
+    for model in manifest():  # manifest order puts the recommended model for each job first
+        if model["role"] not in missing:
+            continue
+        hit = next((c for c in files if c["model_id"] == model["id"] and c["size_gb"] >= 0.3), None)
+        if hit:
+            current = use_model(model["id"], hit["path"], "found")
+            missing.remove(model["role"])
+            _log(f"auto: using {hit['path']} for {model['role']}")
+    return current
+
+
+def unfinished() -> list[dict]:
+    """Downloads that stopped part-way (for example before a reinstall) and can continue."""
+    out, seen = [], set()
+    for root in model_folders():
+        if not root.is_dir():
+            continue
+        for part in root.glob("*.gguf.part"):
+            name = part.name[:-5].lower().replace("_", "-")
+            for model in manifest():
+                if all(re.search(rf"(?<![0-9a-z]){re.escape(k)}", name) for k in model["match"]) and model["id"] not in seen \
+                        and not installed().get(model["role"], {}).get("id") == model["id"]:
+                    seen.add(model["id"])
+                    out.append({"model_id": model["id"], "name": model["name"], "folder": str(root),
+                                "done_gb": round(part.stat().st_size / 1024 ** 3, 2)})
+    return out
 
 
 def detect_existing() -> list[dict]:
@@ -264,6 +324,10 @@ def _download(model: dict, folder: Path, st: dict) -> None:
     st.update(status="done", done_bytes=st["total"], speed=0, message="Verified")
     _log(f"{model['id']}: done, verified")
     use_model(model["id"], str(target), "download")
+    if model["role"] == "embed":  # documents waiting for the search model can be indexed now
+        from . import db, ingest
+        for doc in db.query("SELECT id FROM documents WHERE status = 'needs_model'"):
+            ingest.enqueue(doc["id"])
 
 
 def _sha256(path: Path) -> str:

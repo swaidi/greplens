@@ -71,6 +71,9 @@ def start(document_id: str, kind: str, params: dict) -> dict:
 
 def _run(row: dict) -> None:
     job = Job(row)
+    from . import online
+    doc = db.get("documents", row["document_id"])
+    online.set_workspace(doc["workspace_id"] if doc else None)
     db.update("jobs", job.id, {"status": "running", "updated": db.now()})
     try:
         result = HANDLERS[row["kind"]](job) or {}
