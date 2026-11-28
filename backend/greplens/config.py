@@ -43,7 +43,14 @@ def app_dir() -> Path:
 
 def resources_dir() -> Path:
     """Folder holding the AI engine and OCR language data (set by the desktop shell)."""
-    return Path(os.environ["GREPLENS_RESOURCES"]) if os.environ.get("GREPLENS_RESOURCES") else app_dir()
+    if os.environ.get("GREPLENS_RESOURCES"):
+        return Path(os.environ["GREPLENS_RESOURCES"])
+    if sys.platform.startswith("linux"):  # .deb: /usr/bin/greplens-backend with resources in /usr/lib/GrepLens
+        exe_dir = Path(sys.executable).resolve().parent
+        for candidate in (exe_dir.parent / "lib" / "GrepLens", exe_dir.parent / "lib" / "greplens"):
+            if (candidate / "engine").is_dir():
+                return candidate
+    return app_dir()
 
 
 DEFAULTS = {
