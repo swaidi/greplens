@@ -1,0 +1,26 @@
+name: Check ARM engine
+
+on:
+  workflow_dispatch:
+
+jobs:
+  arm:
+    runs-on: windows-11-arm
+    steps:
+      - name: Start the ARM64 llama.cpp engine and the x64 architecture check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = gh api "repos/ggml-org/llama.cpp/releases?per_page=40" | ConvertFrom-Json
+          foreach ($r in $releases) {
+            $a = $r.assets | Where-Object { $_.name -match "win.*cpu.*arm64.*\.zip$" } | Select-Object -First 1
+            if ($a) { break }
+          }
+          "Testing $($a.name)"
+          Invoke-WebRequest $a.browser_download_url -OutFile arm.zip
+          Expand-Archive arm.zip -DestinationPath arm
+          $exe = (Get-ChildItem arm -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "llama-server (ARM64) did not start: exit $LASTEXITCODE" }
+          "Processor: $env:PROCESSOR_ARCHITECTURE"
