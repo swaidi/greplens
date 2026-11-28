@@ -11,9 +11,14 @@ def _log_file():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    if sys.stdout is None or sys.stderr is None:  # windowed build: keep output in the data folder's logs
+    if getattr(sys, "frozen", False) or sys.stdout is None:  # installed app: keep output in the data folder's logs
         try:
-            sys.stdout = sys.stderr = _log_file()
+            log = _log_file()
+            sys.stdout = sys.stderr = log
+            import faulthandler
+            faulthandler.enable(file=log)  # a crash inside Windows or a library is written to the log too
+            import datetime
+            log.write(f"\n=== GrepLens back end started {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
         except Exception:  # noqa: BLE001
             pass
     try:

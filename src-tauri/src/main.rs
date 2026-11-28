@@ -5,15 +5,51 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, RunEvent, Url};
-use tauri_plugin_shell::{process::CommandChild, ShellExt};
+use tauri::{AppHandle, Manager, RunEvent, Url};
+use tauri_plugin_shell::{
+    process::{CommandChild, CommandEvent},
+    ShellExt,
+};
 
 const PORT: u16 = 8710;
 
 struct Backend(Mutex<Option<CommandChild>>);
+
+/// Set when GrepLens is closing, so the watchdog does not start the back end again.
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+/// Start the back end and watch it: its output is always read (an unread pipe can stall or break it),
+/// and if it stops unexpectedly it is started again.
+fn start_backend(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let resources = app.path().resource_dir()?;
+    let (mut rx, child) = app
+        .shell()
+        .sidecar("greplens-backend")?
+        .env("GREPLENS_RESOURCES", resources.to_string_lossy().to_string())
+        .env("GREPLENS_PORT", PORT.to_string())
+        .spawn()?;
+    *app.state::<Backend>().0.lock().unwrap() = Some(child);
+    std::thread::spawn(move || {
+        while let Some(event) = rx.blocking_recv() {
+            if let CommandEvent::Terminated(_) = event {
+                break;
+            }
+        }
+        app.state::<Backend>().0.lock().unwrap().take();
+        if EXITING.load(Ordering::SeqCst) {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        if !EXITING.load(Ordering::SeqCst) && !backend_ready() {
+            let _ = start_backend(app);
+        }
+    });
+    Ok(())
+}
 
 fn backend_ready() -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&([127, 0, 0, 1], PORT).into(), Duration::from_millis(500)) else {
@@ -32,20 +68,11 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let resources = app.path().resource_dir()?;
+            app.manage(Backend(Mutex::new(None)));
             // Reuse a back end that is already running (for example a second window); otherwise start one.
-            let child = if backend_ready() {
-                None
-            } else {
-                let (_rx, child) = app
-                    .shell()
-                    .sidecar("greplens-backend")?
-                    .env("GREPLENS_RESOURCES", resources.to_string_lossy().to_string())
-                    .env("GREPLENS_PORT", PORT.to_string())
-                    .spawn()?;
-                Some(child)
-            };
-            app.manage(Backend(Mutex::new(child)));
+            if !backend_ready() {
+                start_backend(app.handle().clone())?;
+            }
 
             let window = app.get_webview_window("main").expect("main window");
             // the version in the address makes each update load its own interface, never a cached older one
@@ -65,6 +92,7 @@ fn main() {
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
+            EXITING.store(true, Ordering::SeqCst);
             if let Some(child) = handle.state::<Backend>().0.lock().unwrap().take() {
                 stop_tree(child.pid());
                 let _ = child.kill();

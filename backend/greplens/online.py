@@ -120,6 +120,16 @@ def target(role: str) -> dict | None:
 
 # ---------------------------------------------------------------- connecting a key
 
+def _log(message: str) -> None:
+    """Steps of connecting and calling the service (never the key itself), in logs/online.log."""
+    try:
+        from .config import data_dir
+        with open(data_dir() / "logs" / "online.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
+    except OSError:
+        pass
+
+
 def connect(key: str, provider: str | None = None) -> dict:
     """Check a key, choose good models for each job, and save the key securely."""
     key = re.sub(r"\s+", "", key or "")
@@ -132,14 +142,28 @@ def connect(key: str, provider: str | None = None) -> dict:
     if detect(key) and detect(key) != provider and not (provider == "openai" and detect(key) == "openai"):
         raise OnlineError(f"This key is for {PROVIDERS[detect(key)]['name']}, not {PROVIDERS[provider]['name']}. "
                           "Choose that service, or paste the other key.")
-    if FAKE_AI:
-        available = ["fake-fast", "fake-review"]
-        models = {"fast": "fake-fast", "review": "fake-review"}
-    else:
-        available = _list_models(provider, key)
-        models = _choose(provider, available)
-        _try_chat(provider, key, models["fast"])
-    keystore.put(provider, key)
+    _log(f"connect: {provider}, key of {len(key)} characters")
+    try:
+        if FAKE_AI:
+            available = ["fake-fast", "fake-review"]
+            models = {"fast": "fake-fast", "review": "fake-review"}
+        else:
+            _log("connect: asking the service for its models")
+            available = _list_models(provider, key)
+            _log(f"connect: {len(available)} models listed")
+            models = _choose(provider, available)
+            _log(f"connect: chose {models}; sending a test question")
+            _try_chat(provider, key, models["fast"])
+            _log("connect: test question answered")
+        _log("connect: saving the key in Windows' secure storage")
+        keystore.put(provider, key)
+        _log("connect: key saved")
+    except OnlineError as exc:
+        _log(f"connect: stopped: {exc}")
+        raise
+    except Exception as exc:
+        _log(f"connect: failed: {exc!r}")
+        raise OnlineError(f"GrepLens could not finish connecting: {exc}") from exc
     save_settings({"online": {"provider": provider, "models": models, "available": available[:200]}, "ai_source": "online"})
     last_error.clear()
     return status()

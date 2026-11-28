@@ -42,7 +42,13 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     init.body = JSON.stringify(body);
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
   }
-  const res = await fetch(url, init);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    // the back end stopped; GrepLens starts it again by itself within a few seconds
+    throw new Error("GrepLens's background service stopped unexpectedly and is restarting. Wait a few seconds and try again.");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail ?? detail; } catch { /* not JSON */ }
