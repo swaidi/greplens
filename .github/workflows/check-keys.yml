@@ -1,0 +1,23 @@
+name: Check key storage
+
+on:
+  workflow_dispatch:
+
+jobs:
+  keys:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Save, read and delete a key in Windows Credential Manager, then try a bad key online
+        working-directory: backend
+        env:
+          GREPLENS_DATA: ${{ runner.temp }}\gl
+        run: |
+          pip install -q -r requirements.txt
+          python -X faulthandler -c "from greplens import keystore; keystore.put('test', 'sk-ant-api03-' + 'x'*90); print('read back:', keystore.get('test')[:16]); keystore.delete('test'); print('after delete:', keystore.get('test'))"
+          python -X faulthandler -c "from greplens import online; import traceback
+          try: online.connect('sk-ant-api03-' + 'x'*90)
+          except Exception as e: print(type(e).__name__, e)"
