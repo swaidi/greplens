@@ -7,17 +7,28 @@ jobs:
   keys:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Save, read and delete a key in Windows Credential Manager, then try a bad key online
-        working-directory: backend
+      - name: Install the published release and connect a test key through it
+        shell: pwsh
         env:
-          GREPLENS_DATA: ${{ runner.temp }}\gl
+          GH_TOKEN: ${{ github.token }}
         run: |
-          pip install -q -r requirements.txt
-          python -X faulthandler -c "from greplens import keystore; keystore.put('test', 'sk-ant-api03-' + 'x'*90); print('read back:', keystore.get('test')[:16]); keystore.delete('test'); print('after delete:', keystore.get('test'))"
-          python -X faulthandler -c "from greplens import online; import traceback
-          try: online.connect('sk-ant-api03-' + 'x'*90)
-          except Exception as e: print(type(e).__name__, e)"
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern "*-setup.exe" --dir rel
+          $setup = (Get-ChildItem rel/*-setup.exe)[0].FullName
+          "Installing $setup"
+          Start-Process $setup -ArgumentList "/S" -Wait
+          $dir = Split-Path (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GrepLens").UninstallString.Trim('"') -Parent
+          $env:GREPLENS_PORT = "8799"
+          $p = Start-Process "$dir\greplens-backend.exe" -PassThru
+          for ($i = 0; $i -lt 120; $i++) { try { Invoke-RestMethod http://127.0.0.1:8799/api/health | ConvertTo-Json -Compress; break } catch { Start-Sleep 1 } }
+          "--- online status"
+          try { (Invoke-RestMethod http://127.0.0.1:8799/api/ai/online).source } catch { "status failed: $_" }
+          "--- connect with a made-up Claude key"
+          try {
+            $r = Invoke-WebRequest http://127.0.0.1:8799/api/ai/online/connect -Method Post -ContentType "application/json" -Body '{"key":"sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"}'
+            "HTTP $($r.StatusCode): $($r.Content)"
+          } catch {
+            "request failed: $($_.Exception.Message)"
+            if ($_.ErrorDetails) { $_.ErrorDetails.Message }
+          }
+          "--- backend still running: $(-not $p.HasExited)"
+          Get-ChildItem "$env:LOCALAPPDATA\GrepLens\logs" -ErrorAction SilentlyContinue | ForEach-Object { "=== $($_.Name)"; Get-Content $_.FullName -Tail 40 }
